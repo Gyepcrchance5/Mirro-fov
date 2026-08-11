@@ -276,28 +276,29 @@ function fullVerify(params) {
     const outline2D = rw.outline.map(proj.to2d);
     const tz2D = rw.tz.map(proj.to2d);
     // 中心眼 3 线 (前 3 条), 距边距离: 每条线固定连到一个边 (不随角度变)
-    // BL→左边 (u<0 区域), BR→右边 (u>0 区域), +X→上边 (v>0 区域)
+    // BL→左边 (左半的竖向边), BR→右边 (右半的竖向边), +X→上边 (上半的横向边)
     const lineEdgeMap = { 'BL': 'left', 'BR': 'right', '+X': 'top' };
     const centerLines = result.lineDetails.slice(0, 3).map(ld => {
       const p = { label: `C→${ld.endpointLabel}`, through: ld.throughTransparent };
       if (ld.rearWindowHit) {
         const [u, v] = proj.to2d(ld.rearWindowHit);
         p.hit2D = [round1(u), round1(v)];
-        // 固定边: 按线方向只搜对应半边的轮廓
         const edgeSide = lineEdgeMap[ld.endpointLabel] || 'left';
         let bestDist = Infinity, bestEx = 0, bestEy = 0;
         for (let i = 0; i < outline2D.length; i++) {
           const j = (i + 1) % outline2D.length;
           const [ax, ay] = outline2D[i], [bx, by] = outline2D[j];
-          // 边中点判断是否在对应半边
           const midU = (ax + bx) / 2, midV = (ay + by) / 2;
-          if (edgeSide === 'left' && midU > 0) continue;   // BL 只搜左半 (u<0)
-          if (edgeSide === 'right' && midU < 0) continue;   // BR 只搜右半 (u>0)
-          if (edgeSide === 'top' && midV < 0) continue;     // +X 只搜上半 (v>0)
+          const du = Math.abs(bx - ax), dv = Math.abs(by - ay); // 边的 u/v 方向跨度
+          // BL/BR 找竖向边 (dv>du, 即 Z 方向变化大于 Y 方向)
+          // +X 找横向边 (du>dv, 即 Y 方向变化大于 Z 方向)
+          if (edgeSide === 'left' && (midU > 0 || du > dv)) continue;
+          if (edgeSide === 'right' && (midU < 0 || du > dv)) continue;
+          if (edgeSide === 'top' && (midV < 0 || dv > du)) continue;
           const d = edgeDistanceTo(u, v, ax, ay, bx, by);
           if (d.dist < bestDist) { bestDist = d.dist; bestEx = d.ex; bestEy = d.ey; }
         }
-        // 如果对应半边没找到 (轮廓不对称), 退回搜全部
+        // 退回: 对应区域没找到则搜全部
         if (bestDist === Infinity) {
           for (let i = 0; i < outline2D.length; i++) {
             const j = (i + 1) % outline2D.length;
