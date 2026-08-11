@@ -287,7 +287,7 @@ function fullVerify(params) {
           const j = (i + 1) % outline2D.length;
           const [ax, ay] = outline2D[i], [bx, by] = outline2D[j];
           const d = edgeDistanceTo(u, v, ax, ay, bx, by);
-          if (d.dist < bestDist) { bestDist = d.dist; bestEx = d.x; bestEy = d.y; }
+          if (d.dist < bestDist) { bestDist = d.dist; bestEx = d.ex; bestEy = d.ey; }
         }
         p.dist = round1(bestDist);
         p.near = [round1(bestEx), round1(bestEy)];

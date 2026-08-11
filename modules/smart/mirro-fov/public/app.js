@@ -533,6 +533,7 @@
     currentOutlineLocal = null;
     currentRwOutline = null;
     const cfg = await callJson('/config?path=' + encodeURIComponent(path || ''));
+    console.log('[loadVehicleConfig]', cfg.name, 'outlineLocal:', cfg.outlineLocal?.length||'null', 'rwOutlineFull:', cfg.rwOutlineFull?.length||'null');
     currentPath = cfg.path;
     // 填充全部表单
     elYaw.value = cfg.yawDeg; elPitch.value = cfg.pitchDeg;
