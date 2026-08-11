@@ -6,6 +6,54 @@
 
 ---
 
+## 0. 写代码前速查表 (每次必看, 30 秒)
+
+> 不管写什么代码，先过这个清单。违反任何一条 = bug。
+
+### HTML
+- [ ] 卡片用 `.param-row > .col > .card.shadow-sm.h-100 > .card-header + .card-body` 结构 (§18.2.3)
+- [ ] label + `<small class="unit">单位</small>` + `<input class="form-control form-control-sm">`
+- [ ] 图表区用 `.panel-frame > .panel-bar > .panel-title + .panel-count`
+- [ ] 按钮配色: 卡片内 `btn-solid`(蓝主) / `btn-outline-accent`(蓝描边) / `btn-outline-danger`(红)
+- [ ] landing 大按钮用 `btn btn-primary btn-lg landing-btn` (已有模式, 不改)
+- [ ] badge 颜色用 `badge-pass` / `badge-fail` CSS 类, 不内联 style (landing 除外, 已有模式)
+
+### JavaScript
+- [ ] 事件绑定全部用 `addEventListener`，**禁止 `onclick=`** (现有代码 0 个 onclick)
+- [ ] 页面切换用 `el.style.display = '' / 'none'`，不用 class toggle
+- [ ] 用户输入用 `parseFloat` + `isNaN` 检查 (NaN 防御)
+- [ ] DOM 引用用 `$(id)` (已有别名 `const $ = id => document.getElementById(id)`)
+- [ ] fetch 用 `callJson(url, body)` (已有封装, 自动处理错误)
+- [ ] 每次改 index.html 或 app.js 后递增 `?v=` 版本号
+
+### CSS
+- [ ] **不改 `style.css`** (L0 冻结)
+- [ ] 不自定义颜色/字体, 用 `:root` token (`--accent` / `--pass` / `--fail` 等)
+- [ ] 不重写已有 CSS 组件类, 只引用
+
+### 后端 (routes.js)
+- [ ] POST 路由加 `jsonParser` (不用全局 `express.json()`)
+- [ ] 路径用 `__dirname` 相对路径
+- [ ] 错误用 `friendlyError(e)` 包装
+- [ ] `edgeDistanceTo` 返回字段是 `ex`/`ey` (不是 `x`/`y`)
+
+### 后挡风视图 (§10.1)
+- [ ] 投影用 Y-Z 直投 (`widthVec=[0,1,0]`, `upVec=[0,0,1]`)，不依赖法线
+- [ ] padding 按短边算 `min(宽,高)*0.15+20`，不用 `scaleanchor`
+- [ ] 距边连线: BL→左侧竖向边, BR→右侧竖向边, +X→上方横向边 (固定不跳变)
+
+### STEP 轮廓 (§11.6)
+- [ ] B 样条采样后按 VERTEX_POINT 裁剪 (飞线根因)
+- [ ] 退化边 (<5mm) 跳过
+- [ ] JSON 中用 `null` 不用 `NaN`
+- [ ] 切换车型时先清空 `currentOutlineLocal` / `currentRwOutline`
+
+### 测试
+- [ ] `npm test` 155 断言全绿
+- [ ] 浏览器 Ctrl+Shift+R 强刷后无报错
+
+---
+
 ## 1. 目录结构
 
 ### 1.1 当前 (独立开发)
