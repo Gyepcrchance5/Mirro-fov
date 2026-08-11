@@ -387,11 +387,321 @@ STEP 解析后检查坐标范围:
 
 | 功能 | 状态 |
 |---|---|
-| Landing 改为动作优先 | ❌ 待实现 |
-| 新建向导 UI | ❌ 待实现 |
+| Landing 改为动作优先 | ❌ 待实现 (见 §12 执行计划) |
+| 新建向导 UI | ❌ 待实现 (见 §12 执行计划) |
 | 后挡风 STEP 提取 | ✅ 已完成 (11.6 复盘) |
 | 外镜 STEP 提取 | ❌ 待实现 |
-| STEP 上传 API | ❌ 待实现 (当前只有命令行) |
+| STEP 上传 API | ❌ 待实现 (见 §12 执行计划) |
+
+---
+
+## 12. 工作流开发执行计划 (2026-08-11, 交 Haiku 执行)
+
+> 本节是给执行 agent 的详细设计文档，每个步骤精确到 HTML 结构 / JS 函数签名 / API 格式。
+> 执行 agent 不需要做设计决策，按步骤实现即可。
+> **前提**: 严格遵循 §10.1 后挡风视图渲染规范 + §18 L0 设计系统冻结规则。
+
+### 12.1 总体改动范围
+
+| 文件 | 改动 | 说明 |
+|---|---|---|
+| `public/index.html` | 改 landing + 加向导页 HTML | 新增 3 个 div: mirror-type-select / wizard-page |
+| `public/app.js` | 改 landing 路由 + 加向导逻辑 + 参数卡只读 | 新增 ~200 行 |
+| `routes.js` | 加 STEP 上传 API + 轮廓解析 | 新增 2 个路由 |
+| `public/style.css` | **不改** | L0 冻结，用已有 CSS 类 |
+
+### 12.2 Landing 页改造 (index.html)
+
+**当前**: 两张卡片 (内后视镜 / 外后视镜)
+**改为**: 两张卡片 (校核已有车型 / 新建车型)
+
+```html
+<!-- 替换现有 #landing-page 内的 .landing-cards 内容 -->
+<div class="landing-cards">
+  <div class="landing-card landing-card-verify">
+    <h4>校核已有车型</h4>
+    <h6 class="text-muted">选择已有数据 · 调整参数 · 查看结果</h6>
+    <p class="landing-desc">加载已保存的车型数据，调整角度/参数后校核</p>
+    <span class="badge" style="background:#34c759">就绪</span>
+    <button id="enter-verify-btn" class="btn btn-primary btn-lg landing-btn">进入</button>
+  </div>
+  <div class="landing-card landing-card-new">
+    <h4>新建车型</h4>
+    <h6 class="text-muted">STEP 轮廓 + 3DE 选点 + 参数</h6>
+    <p class="landing-desc">从 STEP 文件提取轮廓，3DE 读取点坐标，创建新车型</p>
+    <span class="badge" style="background:#0071e3">向导</span>
+    <button id="enter-new-btn" class="btn btn-primary btn-lg landing-btn">开始</button>
+  </div>
+</div>
+```
+
+**新增两个中间选择页** (在 landing-page 和 inner-page 之间):
+
+```html
+<!-- 镜子类型选择页 (校核/新建共用) -->
+<div id="mirror-type-page" style="display:none">
+  <div class="top-bar">
+    <button id="type-back-btn" class="btn btn-outline-secondary btn-sm me-2">← 返回</button>
+    <h4 class="top-title mb-0">选择镜子类型</h4>
+  </div>
+  <div class="landing-cards" style="margin-top:40px">
+    <div class="landing-card">
+      <h4>内后视镜</h4>
+      <h6 class="text-muted">GB 15084 I 类 · 平面镜</h6>
+      <p class="landing-desc">五线法 · 镜中倒影 · 后挡风穿透</p>
+      <button id="select-inner-btn" class="btn btn-solid btn-lg landing-btn">选择</button>
+    </div>
+    <div class="landing-card">
+      <h4>外后视镜</h4>
+      <h6 class="text-muted">GB 15084 III 类 · 凸球面镜</h6>
+      <p class="landing-desc">球面反射 · 双眼交集 · 地面三角形视野</p>
+      <button id="select-exterior-btn" class="btn btn-solid btn-lg landing-btn">选择</button>
+    </div>
+  </div>
+</div>
+```
+
+### 12.3 页面路由逻辑 (app.js)
+
+**当前 4 个页面**: landing / inner / exterior
+**改为 6 个页面**: landing / mirror-type / inner / exterior / wizard-inner / wizard-exterior
+
+```javascript
+// 页面路由
+const pages = ['landing-page', 'mirror-type-page', 'inner-page', 'exterior-page',
+               'wizard-inner-page', 'wizard-exterior-page'];
+
+function showPage(name) {
+  pages.forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = id === name + '-page' ? '' : 'none';
+  });
+  // 懒初始化
+  if (name === 'inner' && !innerPage.__inited) { innerPage.__inited = true; initInner(); }
+  if (name === 'exterior' && !exteriorPage.__inited) { exteriorPage.__inited = true; initExterior(); }
+  if (name === 'wizard-inner' && !$('wizard-inner-page').__inited) { $('wizard-inner-page').__inited = true; initWizardInner(); }
+  if (name === 'wizard-exterior' && !$('wizard-exterior-page').__inited) { $('wizard-exterior-page').__inited = true; initWizardExterior(); }
+}
+
+// 按钮绑定
+$('enter-verify-btn').addEventListener('click', () => showPage('mirror-type'));
+$('enter-new-btn').addEventListener('click', () => { wizardMode = 'new'; showPage('mirror-type'); });
+$('type-back-btn').addEventListener('click', () => showPage('landing'));
+$('select-inner-btn').addEventListener('click', () => {
+  if (wizardMode === 'new') showPage('wizard-inner'); else showPage('inner');
+});
+$('select-exterior-btn').addEventListener('click', () => {
+  if (wizardMode === 'new') showPage('wizard-exterior'); else showPage('exterior');
+});
+```
+
+### 12.4 校核页参数卡调整 (app.js)
+
+**规则**: 有 STEP 轮廓的参数卡改为只读 + 显示"STEP N 点"，无 STEP 的保持可编辑。
+
+```javascript
+// 在 loadVehicleConfig 末尾加:
+function updateCardReadonlyState(cfg) {
+  // 镜面尺寸卡: 有 outlineLocal 则只读
+  const hasOutline = !!cfg.outlineLocal;
+  ['width', 'height', 'corner-r'].forEach(id => {
+    const el = $(id);
+    el.readOnly = hasOutline;
+    el.style.opacity = hasOutline ? '0.6' : '';
+  });
+  // 尺寸卡副标题显示 STEP 点数
+  const sizeHeader = document.querySelector('#param-row .col:nth-child(2) .card-header small');
+  if (sizeHeader) sizeHeader.textContent = hasOutline ? `STEP ${cfg.outlineLocal.length} 点轮廓` : '反射涂层有效区域';
+
+  // 后挡风 CAS 卡: 有 rwOutlineFull 则只读
+  const hasRwOutline = !!cfg.rwOutlineFull;
+  for (let i = 0; i < 7; i++) {
+    ['x', 'y', 'z'].forEach(ax => {
+      const el = $(`rw-c${i}-${ax}`);
+      if (el) { el.readOnly = hasRwOutline; el.style.opacity = hasRwOutline ? '0.6' : ''; }
+    });
+  }
+  const rwTitle = $('rw-section-title');
+  if (rwTitle) rwTitle.textContent = hasRwOutline ? `后挡风 STEP ${cfg.rwOutlineFull.length} 点轮廓` : '后挡风 CAS 轮廓 (7 点)';
+}
+```
+
+**保留可编辑的卡**: 镜面角度 (yaw/pitch) / 球铰 pivot / 镜面中心 / 眼点中心 / 地面前后端
+**改为只读的卡**: 镜面尺寸 (有 STEP 时) / 后挡风 CAS 点 (有 STEP 时)
+**隐藏的卡**: 透光区 (有 STEP 后挡风轮廓时隐藏, 透光区=整个轮廓)
+
+### 12.5 STEP 上传 API (routes.js)
+
+```javascript
+// 文件上传需要 express.static 中间件已配置 (已有)
+// 用 multer 处理文件上传? 不——平台规范说"如需新 npm 包告知管理员"。
+// 改用: 前端 FileReader 读文件内容 → POST base64 → 后端写临时文件 → spawn Python 解析
+
+const STEP_UPLOAD_DIR = path.join(__dirname, 'data', 'tmp');
+
+router.post('/api/step/upload', jsonParser, async (req, res) => {
+  const { filename, content } = req.body; // content = base64
+  if (!filename || !content) return res.status(400).json({ ok: false, error: '缺少文件' });
+  // 写临时 STEP 文件
+  fs.mkdirSync(STEP_UPLOAD_DIR, { recursive: true });
+  const stepPath = path.join(STEP_UPLOAD_DIR, filename.replace(/[^a-zA-Z0-9.-]/g, '_'));
+  fs.writeFileSync(stepPath, Buffer.from(content, 'base64'));
+  // spawn Python 解析 (step_rear_window.py 或 step_topology.py)
+  // ... 返回轮廓 JSON
+});
+```
+
+**注意**: 大 STEP 文件 (49MB) base64 编码后 ~65MB，可能超过 express.json() 默认限制。
+改用 `express.json({ limit: '100mb' })` 仅对此路由生效:
+```javascript
+router.post('/api/step/upload', express.json({ limit: '100mb' }), async (req, res) => { ... });
+```
+
+### 12.6 新建向导 UI (index.html + app.js)
+
+向导页用单页多步骤方式 (不用多页面), 用 `data-step` 控制显示:
+
+```html
+<div id="wizard-inner-page" style="display:none">
+  <div class="top-bar">
+    <button id="wiz-inner-back" class="btn btn-outline-secondary btn-sm me-2">← 返回</button>
+    <h4 class="top-title mb-0">新建内后视镜车型</h4>
+  </div>
+
+  <!-- Step 0: 基本信息 -->
+  <div class="wizard-step" data-step="0">
+    <div class="section-title">步骤 1/4: 基本信息</div>
+    <div class="row g-2 mb-2 param-row">
+      <div class="col" style="min-width:200px">
+        <div class="card"><div class="card-body py-2 px-2">
+          <label>车型名称</label>
+          <input id="wiz-name" type="text" class="form-control form-control-sm" placeholder="例如: 新车型A">
+        </div></div>
+      </div>
+    </div>
+    <button class="btn btn-solid" onclick="wizardNext(0)">下一步</button>
+  </div>
+
+  <!-- Step 1: STEP 上传 -->
+  <div class="wizard-step" data-step="1" style="display:none">
+    <div class="section-title">步骤 2/4: 镜面轮廓 (STEP)</div>
+    <div class="card mb-2"><div class="card-body py-2 px-2">
+      <input id="wiz-mirror-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
+      <button id="wiz-parse-mirror" class="btn btn-solid btn-sm mt-2">解析镜面轮廓</button>
+      <div id="wiz-mirror-result" class="text-muted mt-1" style="font-size:12px">等待上传...</div>
+    </div></div>
+    <div class="section-title mt-2">后挡风轮廓 (可选)</div>
+    <div class="card mb-2"><div class="card-body py-2 px-2">
+      <input id="wiz-rw-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
+      <button id="wiz-parse-rw" class="btn btn-solid btn-sm mt-2">解析后挡风轮廓</button>
+      <div id="wiz-rw-result" class="text-muted mt-1" style="font-size:12px">可跳过, 后续用 3DE 手动选点</div>
+    </div></div>
+    <button class="btn btn-outline-accent" onclick="wizardPrev(1)">上一步</button>
+    <button class="btn btn-solid" onclick="wizardNext(1)">下一步</button>
+  </div>
+
+  <!-- Step 2: 点坐标 -->
+  <div class="wizard-step" data-step="2" style="display:none">
+    <div class="section-title">步骤 3/4: 点坐标</div>
+    <div class="card mb-2"><div class="card-body py-2 px-2">
+      <button id="wiz-catia-btn" class="btn btn-solid btn-sm mb-2">从 3DE 读取</button>
+      <small class="text-muted">或手动输入坐标 (mm)</small>
+      <!-- 5 个点的输入框: pivot / center_zero / 眼点 / 地面前 / 地面后 -->
+      <!-- 用 .param-row .card 结构, 同校核页 -->
+      <div id="wiz-points-grid"></div>
+    </div></div>
+    <button class="btn btn-outline-accent" onclick="wizardPrev(2)">上一步</button>
+    <button class="btn btn-solid" onclick="wizardNext(2)">下一步</button>
+  </div>
+
+  <!-- Step 3: 标量参数 + 保存 -->
+  <div class="wizard-step" data-step="3" style="display:none">
+    <div class="section-title">步骤 4/4: 参数 & 保存</div>
+    <div class="card mb-2"><div class="card-body py-2 px-2">
+      <label>yaw (°)</label><input id="wiz-yaw" type="number" step="any" class="form-control form-control-sm" value="-23.5">
+      <label>pitch (°)</label><input id="wiz-pitch" type="number" step="any" class="form-control form-control-sm" value="5.0">
+      <label>圆角R (mm)</label><input id="wiz-corner" type="number" step="any" class="form-control form-control-sm" value="10">
+      <label>瞳距 (mm)</label><input id="wiz-ipd" type="number" step="any" class="form-control form-control-sm" value="65">
+    </div></div>
+    <button class="btn btn-outline-accent" onclick="wizardPrev(3)">上一步</button>
+    <button id="wiz-save-btn" class="btn btn-solid">保存并校核</button>
+  </div>
+</div>
+```
+
+### 12.7 向导逻辑 (app.js)
+
+```javascript
+let wizardMode = 'verify'; // 'verify' 或 'new'
+let wizardData = { name: '', mirrorOutline: null, rwOutline: null, points: null };
+
+function wizardNext(current) {
+  document.querySelector(`.wizard-step[data-step="${current}"]`).style.display = 'none';
+  document.querySelector(`.wizard-step[data-step="${current+1}"]`).style.display = '';
+}
+function wizardPrev(current) {
+  document.querySelector(`.wizard-step[data-step="${current}"]`).style.display = 'none';
+  document.querySelector(`.wizard-step[data-step="${current-1}"]`).style.display = '';
+}
+
+// STEP 上传 + 解析
+async function parseStepFile(fileInput, resultDiv, type) {
+  const file = fileInput.files[0];
+  if (!file) return;
+  resultDiv.textContent = '解析中...';
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const resp = await fetch(API_BASE + '/step/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: file.name,
+        content: btoa(e.target.result), // base64
+        type: type, // 'mirror' 或 'rear-window'
+      }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      resultDiv.innerHTML = `✅ 提取 ${data.outline_count} 点轮廓`;
+      if (type === 'mirror') wizardData.mirrorOutline = data.outline;
+      else wizardData.rwOutline = data.outline;
+    } else {
+      resultDiv.innerHTML = `❌ ${data.error}`;
+    }
+  };
+  reader.readAsBinaryString(file);
+}
+
+// 保存新车型
+async function saveNewVehicle() {
+  // 1. 组装 JSON (内镜格式)
+  // 2. POST /api/vehicles/save
+  // 3. 如有 STEP 轮廓, 额外保存 outline 文件 + 设置 outline_path
+  // 4. 切换到校核页
+}
+```
+
+### 12.8 执行顺序 (给 Haiku 的任务拆分)
+
+| 步骤 | 内容 | 文件 | 预计行数 |
+|---|---|---|---|
+| **1** | Landing 页改为动作优先 (两张卡片: 校核/新建) | index.html + app.js | ~30 行 |
+| **2** | 加镜子类型选择页 (内/外镜) | index.html + app.js | ~40 行 |
+| **3** | 校核页参数卡只读逻辑 (有 STEP 时只读) | app.js | ~30 行 |
+| **4** | STEP 上传 API (base64 → 临时文件 → spawn Python) | routes.js | ~50 行 |
+| **5** | 新建向导 HTML (4 步表单) | index.html | ~80 行 |
+| **6** | 向导 JS 逻辑 (步骤切换 + STEP 解析 + 保存) | app.js | ~120 行 |
+| **7** | 验证 (npm test + npm start + 浏览器测试) | — | — |
+
+**每步独立可验证**: 完成一步后刷新浏览器确认不报错, 再做下一步。
+
+### 12.9 不做的事 (Haiku 不需要实现)
+
+- 外镜 STEP 提取 (凸球面面名/几何判定不同, 后续单独做)
+- 外镜新建向导 (结构同内镜, 数据不同, 内镜跑通后复制改)
+- Python step_rear_window.py 合并裁剪逻辑 (当前用命令行验证, API 集成后续做)
+- AI 助手深度集成 (window.__aiActions)
+- 平台落地页 modules/smart/public/index.html (已有)
 
 ### 11.6 STEP 轮廓提取复盘 (2026-08-11)
 
