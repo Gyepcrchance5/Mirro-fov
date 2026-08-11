@@ -1,0 +1,411 @@
+/* ============================================================
+   Mirro-fov — Apple 冷白主题
+   冷白背景 + 纯白卡片 + 深墨文字 + 系统蓝 (#0071e3) 点缀。
+   Apple 设计语言: 极简、清爽、细线分割、细腻圆角、大量留白。
+   ============================================================ */
+
+/* ----- Design tokens ----- */
+:root {
+  --bg: #f5f5f7;            /* 冷白背景 (Apple 标准灰白) */
+  --surface: #ffffff;       /* 卡片 / 图表 */
+  --surface-2: #fafafa;     /* 输入框 hover / 次级表面 */
+  --ink: #1d1d1f;           /* 深墨正文 (Apple 标准) */
+  --muted: #6e6e73;         /* 次级文字 */
+  --faint: #9a9aa0;         /* 弱文字 */
+  --hairline: #e4e4e8;      /* 分割线 */
+  --hairline-strong: #d2d2d7;
+  --accent: #0071e3;        /* Apple 系统蓝 */
+  --accent-deep: #005bb5;   /* hover */
+  --pass: #34c759;          /* Apple 系统绿 */
+  --pass-bg: rgba(52,199,89,.12);
+  --fail: #ff3b30;          /* Apple 系统红 */
+  --fail-bg: rgba(255,59,48,.1);
+  /* 全站统一字体栈 (Windows 可靠): 西文 Segoe UI + 中文 Microsoft YaHei。
+     数字对齐靠 tabular-nums, 不再混用独立等宽字体。 */
+  --sans: "Segoe UI", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --mono: var(--sans);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   全局
+   ============================================================ */
+body {
+  background: var(--bg);
+  color: var(--ink) !important;
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* 文字归位 */
+.alert { color: var(--ink) !important; }
+.alert div, .alert span, .alert p, .alert small { color: var(--ink) !important; }
+.text-muted, .text-muted div, .text-muted span, small.text-muted { color: var(--muted) !important; }
+.alert label, .alert .form-label { color: var(--ink) !important; }
+label { color: var(--ink) !important; }
+
+/* ============================================================
+   页面头
+   ============================================================ */
+.page-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 2px; }
+h4, .h4 {
+  color: var(--ink) !important;
+  font-family: var(--sans);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 0;
+}
+.page-sub { color: var(--faint); font-size: 11.5px; letter-spacing: .08em; }
+.page-head + p.text-muted { color: var(--muted) !important; }
+
+/* 坐标提示条 — 中性白卡片 (不用 alert-secondary, 避免 FLATLY 绿色背景) */
+.coord-bar {
+  color: var(--ink) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 8px !important;
+  padding: 4px 10px;
+}
+.coord-bar .text-muted { color: var(--muted) !important; }
+.coord-axis { font-family: var(--mono); font-weight: 700; color: var(--ink) !important; }
+.unit { color: var(--faint) !important; font-size: 10.5px; }
+
+/* ============================================================
+   判据面板
+   ============================================================ */
+.verdict-panel {
+  border: 1px solid var(--hairline) !important;
+  border-radius: 12px !important;
+  background: var(--surface) !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+}
+
+.verdict-head { display: flex; align-items: center; gap: 18px; }
+
+/* outline 徽章 */
+.verdict-badge {
+  flex: none;
+  border: 1px solid;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  padding: 5px 14px;
+  font-family: var(--mono);
+}
+.badge-pass { color: var(--pass); border-color: rgba(52,199,89,.5); background: var(--pass-bg); }
+.badge-fail { color: var(--fail); border-color: rgba(255,59,48,.45); background: var(--fail-bg); }
+
+/* 外镜页: readonly 输入与内镜可编辑输入同色 (1:1 风格) */
+#exterior-page input[readonly] { background-color: var(--surface) !important; opacity: 1; }
+
+.verdict-body { flex: 1; min-width: 0; }
+
+.verdict-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.verdict-rule { font-weight: 650; font-size: 14.5px; letter-spacing: .01em; }
+#verdict-count { font-size: 19px; font-weight: 700; color: var(--ink); }
+.verdict-spec { font-size: 12px; color: var(--faint); }
+/* 校核状态: 面板标题行内的小灰字, 靠右, 不占独立行 */
+.verdict-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 五线状态行 */
+.verdict-lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.verdict-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.verdict-line .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.verdict-line.ok { color: var(--pass); }
+.verdict-line.no { color: var(--fail); }
+.verdict-line b { font-weight: 600; color: var(--ink); }
+.verdict-line s {
+  text-decoration: none;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+}
+
+.verdict-fail-title { margin-top: 10px; font-weight: 650; font-size: 12.5px; color: var(--fail); }
+.verdict-fail-item { font-size: 12.5px; color: var(--fail); margin-top: 3px; }
+
+/* ============================================================
+   参数卡
+   ============================================================ */
+.param-row .col { display: flex; }
+.card {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+}
+.card:hover { border-color: var(--hairline-strong); }
+.param-row .card { width: 100%; height: 100%; }
+
+.param-row .card-header {
+  background: transparent !important;
+  border-bottom: 1px solid var(--hairline);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: .01em;
+  color: var(--ink) !important;
+  padding: 10px 12px 9px !important;
+}
+.param-row .card-header .card-title { color: var(--ink) !important; margin-bottom: 0; }
+.param-row .card-header small.text-muted { color: var(--faint) !important; }
+.param-row .card-body {
+  background: transparent;
+  border-radius: 0 0 12px 12px;
+  padding: 10px 12px 12px !important;
+}
+
+.param-row .card-body .mb-2 { margin-bottom: 8px !important; }
+.param-row label {
+  display: inline-block;
+  min-width: 44px;
+  font-size: 12.5px;
+  color: var(--ink) !important;
+}
+.param-row label + small { color: var(--faint) !important; font-size: 10.5px; }
+
+/* 输入框 — 白底细边 */
+.form-control-sm {
+  border-radius: 8px;
+  border-color: var(--hairline-strong);
+  font-size: 13px;
+  padding: 5px 9px;
+  color: var(--ink) !important;
+  background: var(--surface) !important;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  transition: border-color .15s, box-shadow .15s;
+}
+.form-control-sm:hover { background: var(--surface-2); }
+.form-control-sm:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0,113,227,.12);
+  outline: none;
+}
+.form-control-sm::placeholder { color: var(--faint); }
+
+/* 按钮 */
+#verify-btn, #auto-btn {
+  border-radius: 8px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  transition: background .15s, transform .05s;
+  border: none;
+}
+#verify-btn { background: var(--accent); color: #fff !important; }
+#verify-btn:hover { background: var(--accent-deep); }
+#verify-btn:active { transform: translateY(1px); }
+#auto-btn {
+  background: var(--surface);
+  color: var(--ink) !important;
+  border: 1px solid var(--hairline-strong) !important;
+}
+#auto-btn:hover { border-color: var(--faint); background: var(--surface-2); }
+
+/* 推荐提示 */
+.border-top.text-muted { font-style: normal; color: var(--faint) !important; font-size: 11px; }
+
+/* ============================================================
+   图表区
+   ============================================================ */
+.panel-frame {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+}
+.panel-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--ink);
+}
+.panel-title { font-weight: 600; }
+.panel-count {
+  font-weight: 500;
+  font-size: 11.5px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+#mirror-view { background: var(--surface); }
+
+/* ============================================================
+   加载状态 / 滚动条
+   ============================================================ */
+#auto-status.searching { color: var(--accent); font-weight: 600; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+
+/* ============================================================
+   Landing 入口页
+   ============================================================ */
+#landing-page { min-height: 70vh; display: flex; align-items: center; justify-content: center; }
+.landing-inner { text-align: center; max-width: 720px; }
+.landing-title { font-family: var(--sans); font-weight: 700; color: var(--ink); }
+.landing-sub { color: var(--muted); margin-bottom: 28px; }
+.landing-cards { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+.landing-card {
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 28px 32px;
+  width: 300px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.04);
+}
+.landing-card h4 { margin-bottom: 2px; }
+.landing-card h6 { margin-bottom: 10px; }
+.landing-desc { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+.landing-btn { margin-top: 14px; width: 100%; border-radius: 8px; }
+
+/* ============================================================
+   顶栏 (返回 + 标题 + 车型 + 操作)
+   ============================================================ */
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.top-title { font-family: var(--sans); font-weight: 700; color: var(--ink); }
+.top-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+
+/* 车型下拉 — 白底细边, 与输入框一致 */
+.vehicle-group { width: auto; max-width: 220px; }
+.vehicle-group .input-group-text {
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-right: none;
+  border-radius: 7px 0 0 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.vehicle-group .form-select {
+  border-radius: 0 7px 7px 0;
+  font-size: 13px;
+  border-color: var(--hairline-strong);
+  background: var(--surface);
+  color: var(--ink);
+}
+.vehicle-group .form-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0,113,227,.12);
+}
+
+/* Apple 协调配色按钮: 实心蓝 = 主操作, outline = 次级/危险 (顶栏+卡片通用) */
+.btn-solid {
+  background: var(--accent);
+  color: #fff !important;
+  border: none;
+  border-radius: 7px;
+  font-weight: 600;
+}
+.btn-solid:hover { background: var(--accent-deep); }
+.btn-outline-accent {
+  background: var(--surface);
+  color: var(--accent) !important;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  font-weight: 600;
+}
+.btn-outline-accent:hover { border-color: var(--accent); background: rgba(0,113,227,.05); }
+.btn-outline-danger {
+  background: var(--surface);
+  color: var(--fail) !important;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  font-weight: 600;
+}
+.btn-outline-danger:hover { border-color: var(--fail); background: var(--fail-bg); }
+
+/* ============================================================
+   rw_pass 徽标 (后挡风穿透)
+   ============================================================ */
+.rw-badge {
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: .05em;
+  border: 1px solid;
+  border-radius: 6px;
+  padding: 2px 9px;
+  font-family: var(--mono);
+}
+.rw-pass { color: var(--pass); border-color: rgba(52,199,89,.5); background: var(--pass-bg); }
+.rw-fail { color: var(--fail); border-color: rgba(255,59,48,.45); background: var(--fail-bg); }
+/* 后挡风"参考·非硬判据"提示 */
+.rw-note { font-size: 11px; color: var(--faint); }
+
+/* ============================================================
+   区块标题 (后挡风 CAS / 透光区)
+   ============================================================ */
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 4px 0 8px;
+  padding-left: 10px;
+  border-left: 3px solid var(--hairline-strong);
+  letter-spacing: .02em;
+}
+
+/* 后挡风 / 透光区卡: 等高 (同 .param-row) */
+#rw-row .col, #tz-row .col { display: flex; }
+#rw-row .card, #tz-row .card { width: 100%; height: 100%; }
+#rw-row .card-header, #tz-row .card-header {
+  background: transparent !important;
+  border-bottom: 1px solid var(--hairline);
+  font-weight: 600; font-size: 13px;
+  color: var(--ink) !important;
+  padding: 10px 12px 9px !important;
+}
+#rw-row .card-header .card-title, #tz-row .card-header .card-title { margin-bottom: 0; }
+#rw-row .card-header small, #tz-row .card-header small { color: var(--faint) !important; }
+#rw-row .card-body, #tz-row .card-body { background: transparent; padding: 10px 12px 12px !important; }
+#rw-row label, #tz-row label {
+  display: inline-block; min-width: 30px; font-size: 12.5px; color: var(--ink) !important;
+}
+
+/* ============================================================
+   可访问性: 键盘焦点 + 减少动效
+   ============================================================ */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
