@@ -279,6 +279,39 @@ git log --oneline -10                              # 最近提交
 5. **Python 是 3DE 唯一入口**: JS 通过 spawn 代理 Python。Python 外镜引擎已移植 (`mirror_fov/exterior_mirror.py`)
 6. **HANDOFF.md 是主文档**: 算法细节、判据体系、历史变更都看 HANDOFF，本文件是开发操作规范
 
+### 10.1 后挡风视图渲染规范
+
+后挡风视图 (2D 投影图) 的显示规则，改之前必看：
+
+#### 投影方式
+- **Y-Z 直投** (u=Y, v=Z)，不依赖平面法线
+- 原因: 后挡风可能近乎水平 (法线 Z 分量大)，法线投影法会导致"上"方向偏到 +X
+- `buildProjection` 中 `widthVec=[0,1,0]`, `upVec=[0,0,1]`，不可改
+
+#### 画幅 padding
+- `pad = min(宽, 高) * 0.15 + 20` (按短边算)
+- 不用 `scaleanchor` (等比例锁定会让扁形状被压缩成细缝)
+
+#### 距边连线 (红色虚线)
+3 条中心线各固定连到一个边，**不随角度跳变**：
+
+| 线 | 固定连到 | 筛选条件 |
+|---|---|---|
+| C→BL (左) | 后挡风左侧竖向边 | 左半 (midU<0) 且竖向 (dv>du) |
+| C→BR (右) | 后挡风右侧竖向边 | 右半 (midU>0) 且竖向 (dv>du) |
+| C→+X (后) | 后挡风上方横向边 | 上半 (midV>0) 且横向 (du>dv) |
+
+- **竖向边** = Z 方向跨度 > Y 方向跨度 (dv>du) = 左右侧边
+- **横向边** = Y 方向跨度 > Z 方向跨度 (du>dv) = 上/下边
+- 退回机制: 对应区域无匹配边则搜全部
+- `edgeDistanceTo` 返回字段是 `ex`/`ey` (不是 `x`/`y`)
+
+#### STEP 轮廓的车型隔离
+- `currentOutlineLocal` / `currentRwOutline` 在 `loadVehicleConfig` 开头**先清空**
+- 防止切换车型时上一个车型的 STEP 轮廓残留
+- 有 `outline_path` / `rear_window.outline_path` 的车型才加载 STEP 轮廓，无则用简化点
+6. **HANDOFF.md 是主文档**: 算法细节、判据体系、历史变更都看 HANDOFF，本文件是开发操作规范
+
 ---
 
 ## 11. 用户工作流设计 (2026-08-11 定稿, 待实现)
