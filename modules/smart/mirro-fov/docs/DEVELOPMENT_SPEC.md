@@ -405,10 +405,21 @@ STEP 解析后检查坐标范围:
 
 | 文件 | 改动 | 说明 |
 |---|---|---|
-| `public/index.html` | 改 landing + 加向导页 HTML | 新增 3 个 div: mirror-type-select / wizard-page |
+| `public/index.html` | 改 landing + 加向导页 HTML | 新增 3 个 div: mirror-type-page / wizard-inner-page |
 | `public/app.js` | 改 landing 路由 + 加向导逻辑 + 参数卡只读 | 新增 ~200 行 |
 | `routes.js` | 加 STEP 上传 API + 轮廓解析 | 新增 2 个路由 |
 | `public/style.css` | **不改** | L0 冻结，用已有 CSS 类 |
+
+#### 开发规范约束 (执行 agent 必须遵守)
+
+1. **L0 冻结** (§18.2.4): 不改 `style.css`，不加自定义颜色/字体，用已有 CSS 类
+2. **按钮配色**: landing 页大按钮用 `btn btn-primary btn-lg landing-btn` (现有模式); 卡片内按钮用 `btn-solid` / `btn-outline-accent`
+3. **事件绑定**: 全部用 `addEventListener`，**禁止 `onclick=`** 内联处理器 (现有代码 0 个 onclick)
+4. **页面切换**: 用 `el.style.display = '' / 'none'` (现有模式)，不用 class toggle
+5. **版本号**: 每次改 `index.html` 或 `app.js` 后，递增 `?v=` 版本号 (如 `20260811d` → `20260811e`)
+6. **透光区**: 有 STEP 后挡风轮廓时不隐藏透光区卡，改为只读 + 显示"透光区 = 整体轮廓"
+7. **NaN 防御**: 所有用户输入用 `parseFloat` + `isNaN` 检查
+8. **测试**: 每步完成后 `npm test` 必须 155 断言全绿
 
 ### 12.2 Landing 页改造 (index.html)
 
@@ -559,7 +570,8 @@ router.post('/api/step/upload', express.json({ limit: '100mb' }), async (req, re
 
 ### 12.6 新建向导 UI (index.html + app.js)
 
-向导页用单页多步骤方式 (不用多页面), 用 `data-step` 控制显示:
+向导页用单页多步骤方式 (不用多页面), 用 `data-step` 控制显示。
+**注意**: 所有按钮用 `id` + `addEventListener` 绑定，**禁止 `onclick=`**。
 
 ```html
 <div id="wizard-inner-page" style="display:none">
@@ -573,63 +585,99 @@ router.post('/api/step/upload', express.json({ limit: '100mb' }), async (req, re
     <div class="section-title">步骤 1/4: 基本信息</div>
     <div class="row g-2 mb-2 param-row">
       <div class="col" style="min-width:200px">
-        <div class="card"><div class="card-body py-2 px-2">
-          <label>车型名称</label>
-          <input id="wiz-name" type="text" class="form-control form-control-sm" placeholder="例如: 新车型A">
-        </div></div>
+        <div class="card shadow-sm h-100">
+          <div class="card-header py-1 px-2"><div class="card-title mb-0">车型信息</div></div>
+          <div class="card-body py-2 px-2">
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">车型名称 </label><input id="wiz-name" type="text" class="form-control form-control-sm" placeholder="例如: 新车型A"></div>
+          </div>
+        </div>
       </div>
     </div>
-    <button class="btn btn-solid" onclick="wizardNext(0)">下一步</button>
+    <button id="wiz-step0-next" class="btn btn-solid btn-sm">下一步</button>
   </div>
 
   <!-- Step 1: STEP 上传 -->
   <div class="wizard-step" data-step="1" style="display:none">
     <div class="section-title">步骤 2/4: 镜面轮廓 (STEP)</div>
-    <div class="card mb-2"><div class="card-body py-2 px-2">
-      <input id="wiz-mirror-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
-      <button id="wiz-parse-mirror" class="btn btn-solid btn-sm mt-2">解析镜面轮廓</button>
+    <div class="card shadow-sm mb-2"><div class="card-body py-2 px-2">
+      <input id="wiz-mirror-step" type="file" accept=".stp,.step" class="form-control form-control-sm mb-2">
+      <button id="wiz-parse-mirror" class="btn btn-solid btn-sm">解析镜面轮廓</button>
       <div id="wiz-mirror-result" class="text-muted mt-1" style="font-size:12px">等待上传...</div>
     </div></div>
-    <div class="section-title mt-2">后挡风轮廓 (可选)</div>
-    <div class="card mb-2"><div class="card-body py-2 px-2">
-      <input id="wiz-rw-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
-      <button id="wiz-parse-rw" class="btn btn-solid btn-sm mt-2">解析后挡风轮廓</button>
+    <div class="section-title">后挡风轮廓 (可选, 可跳过)</div>
+    <div class="card shadow-sm mb-2"><div class="card-body py-2 px-2">
+      <input id="wiz-rw-step" type="file" accept=".stp,.step" class="form-control form-control-sm mb-2">
+      <button id="wiz-parse-rw" class="btn btn-solid btn-sm">解析后挡风轮廓</button>
       <div id="wiz-rw-result" class="text-muted mt-1" style="font-size:12px">可跳过, 后续用 3DE 手动选点</div>
     </div></div>
-    <button class="btn btn-outline-accent" onclick="wizardPrev(1)">上一步</button>
-    <button class="btn btn-solid" onclick="wizardNext(1)">下一步</button>
+    <button id="wiz-step1-prev" class="btn btn-outline-accent btn-sm me-1">上一步</button>
+    <button id="wiz-step1-next" class="btn btn-solid btn-sm">下一步</button>
   </div>
 
   <!-- Step 2: 点坐标 -->
   <div class="wizard-step" data-step="2" style="display:none">
     <div class="section-title">步骤 3/4: 点坐标</div>
-    <div class="card mb-2"><div class="card-body py-2 px-2">
+    <div class="card shadow-sm mb-2"><div class="card-body py-2 px-2">
       <button id="wiz-catia-btn" class="btn btn-solid btn-sm mb-2">从 3DE 读取</button>
       <small class="text-muted">或手动输入坐标 (mm)</small>
-      <!-- 5 个点的输入框: pivot / center_zero / 眼点 / 地面前 / 地面后 -->
-      <!-- 用 .param-row .card 结构, 同校核页 -->
-      <div id="wiz-points-grid"></div>
+      <!-- 5 个点的输入框, 用 .param-row .card 结构 (同校核页) -->
+      <!-- 每个点一个 .col > .card, 含 3 个 input (X/Y/Z) -->
+      <!-- id 命名: wiz-pvt-x / wiz-pvt-y / wiz-pvt-z / wiz-cz-x / ... -->
+      <!-- 点: pivot / center_zero / eye / ground_front / ground_rear -->
+      <div class="row g-2 param-row" id="wiz-points-grid"></div>
     </div></div>
-    <button class="btn btn-outline-accent" onclick="wizardPrev(2)">上一步</button>
-    <button class="btn btn-solid" onclick="wizardNext(2)">下一步</button>
+    <button id="wiz-step2-prev" class="btn btn-outline-accent btn-sm me-1">上一步</button>
+    <button id="wiz-step2-next" class="btn btn-solid btn-sm">下一步</button>
   </div>
 
   <!-- Step 3: 标量参数 + 保存 -->
   <div class="wizard-step" data-step="3" style="display:none">
     <div class="section-title">步骤 4/4: 参数 & 保存</div>
-    <div class="card mb-2"><div class="card-body py-2 px-2">
-      <label>yaw (°)</label><input id="wiz-yaw" type="number" step="any" class="form-control form-control-sm" value="-23.5">
-      <label>pitch (°)</label><input id="wiz-pitch" type="number" step="any" class="form-control form-control-sm" value="5.0">
-      <label>圆角R (mm)</label><input id="wiz-corner" type="number" step="any" class="form-control form-control-sm" value="10">
-      <label>瞳距 (mm)</label><input id="wiz-ipd" type="number" step="any" class="form-control form-control-sm" value="65">
-    </div></div>
-    <button class="btn btn-outline-accent" onclick="wizardPrev(3)">上一步</button>
-    <button id="wiz-save-btn" class="btn btn-solid">保存并校核</button>
+    <div class="row g-2 mb-2 param-row">
+      <div class="col" style="min-width:130px">
+        <div class="card shadow-sm h-100">
+          <div class="card-header py-1 px-2"><div class="card-title mb-0">角度</div></div>
+          <div class="card-body py-2 px-2">
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">yaw </label><small class="unit">°</small><input id="wiz-yaw" type="number" step="any" class="form-control form-control-sm" value="-23.5"></div>
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">pitch </label><small class="unit">°</small><input id="wiz-pitch" type="number" step="any" class="form-control form-control-sm" value="5.0"></div>
+          </div>
+        </div>
+      </div>
+      <div class="col" style="min-width:130px">
+        <div class="card shadow-sm h-100">
+          <div class="card-header py-1 px-2"><div class="card-title mb-0">其他</div></div>
+          <div class="card-body py-2 px-2">
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">圆角R </label><small class="unit">mm</small><input id="wiz-corner" type="number" step="any" class="form-control form-control-sm" value="10"></div>
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">瞳距 </label><small class="unit">mm</small><input id="wiz-ipd" type="number" step="any" class="form-control form-control-sm" value="65"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <button id="wiz-step3-prev" class="btn btn-outline-accent btn-sm me-1">上一步</button>
+    <button id="wiz-save-btn" class="btn btn-solid btn-sm">保存并校核</button>
   </div>
 </div>
 ```
 
+**Step 2 点坐标输入框** (JS 动态生成, 结构同校核页参数卡):
+
+```javascript
+// 5 个点, 每个点一个 .col > .card
+const wizPoints = [
+  { id: 'pvt', label: '球铰 pivot', default: [2883.07, 0, 1441.017] },
+  { id: 'cz',  label: '镜面中心',   default: [2909.215, 0.007, 1441.88] },
+  { id: 'eye', label: '眼点中心',   default: [3243.09, -385, 1372] },
+  { id: 'gf',  label: '地面前端',   default: [500, 0, 193.209] },
+  { id: 'gr',  label: '地面后端',   default: [5900, 0, 193.209] },
+];
+// 每个 .card 里 3 个 input: id="wiz-{id}-x", id="wiz-{id}-y", id="wiz-{id}-z"
+// 用 .param-row .card .card-header .card-body 结构 (同 §18.2.3 参数卡骨架)
+// label + small.unit + input.form-control-sm
+```
+
 ### 12.7 向导逻辑 (app.js)
+
+**全部用 `addEventListener`，禁止 `onclick=`**。
 
 ```javascript
 let wizardMode = 'verify'; // 'verify' 或 'new'
@@ -644,40 +692,66 @@ function wizardPrev(current) {
   document.querySelector(`.wizard-step[data-step="${current-1}"]`).style.display = '';
 }
 
+function initWizardInner() {
+  // 动态生成 Step 2 点坐标输入卡
+  buildWizardPoints();
+  // 步骤导航 (全 addEventListener)
+  $('wiz-inner-back').addEventListener('click', () => showPage('mirror-type'));
+  $('wiz-step0-next').addEventListener('click', () => { wizardData.name = $('wiz-name').value || '新车型'; wizardNext(0); });
+  $('wiz-step1-prev').addEventListener('click', () => wizardPrev(1));
+  $('wiz-step1-next').addEventListener('click', () => wizardNext(1));
+  $('wiz-step2-prev').addEventListener('click', () => wizardPrev(2));
+  $('wiz-step2-next').addEventListener('click', () => wizardNext(2));
+  $('wiz-step3-prev').addEventListener('click', () => wizardPrev(3));
+  // STEP 解析
+  $('wiz-parse-mirror').addEventListener('click', () => parseStepFile($('wiz-mirror-step'), $('wiz-mirror-result'), 'mirror'));
+  $('wiz-parse-rw').addEventListener('click', () => parseStepFile($('wiz-rw-step'), $('wiz-rw-result'), 'rear-window'));
+  // 3DE 读取
+  $('wiz-catia-btn').addEventListener('click', doWizCatia);
+  // 保存
+  $('wiz-save-btn').addEventListener('click', saveNewVehicle);
+}
+
 // STEP 上传 + 解析
 async function parseStepFile(fileInput, resultDiv, type) {
   const file = fileInput.files[0];
-  if (!file) return;
-  resultDiv.textContent = '解析中...';
+  if (!file) { resultDiv.textContent = '请先选择文件'; return; }
+  resultDiv.textContent = '解析中... (大文件可能需要 30 秒)';
   const reader = new FileReader();
   reader.onload = async (e) => {
-    const resp = await fetch(API_BASE + '/step/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filename: file.name,
-        content: btoa(e.target.result), // base64
-        type: type, // 'mirror' 或 'rear-window'
-      }),
-    });
-    const data = await resp.json();
-    if (data.ok) {
-      resultDiv.innerHTML = `✅ 提取 ${data.outline_count} 点轮廓`;
-      if (type === 'mirror') wizardData.mirrorOutline = data.outline;
-      else wizardData.rwOutline = data.outline;
-    } else {
-      resultDiv.innerHTML = `❌ ${data.error}`;
-    }
+    try {
+      const resp = await fetch(API_BASE + '/step/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, content: btoa(e.target.result), type }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        resultDiv.innerHTML = `✅ 提取 ${data.outline_count} 点轮廓`;
+        if (type === 'mirror') wizardData.mirrorOutline = data.outline;
+        else wizardData.rwOutline = data.outline;
+      } else {
+        resultDiv.innerHTML = `❌ ${data.error}`;
+      }
+    } catch (err) { resultDiv.innerHTML = `❌ ${err.message}`; }
   };
   reader.readAsBinaryString(file);
 }
 
+// 3DE 读取 (复用现有 catia_extract, 读完后填充 wiz 点输入框)
+async function doWizCatia() {
+  // 同 doCatia 流程, 但读完后填充 wiz-pvt-x/y/z 等输入框而非校核页输入框
+  // ... (实现时参考现有 doCatia, 改填充目标 id)
+}
+
 // 保存新车型
 async function saveNewVehicle() {
-  // 1. 组装 JSON (内镜格式)
-  // 2. POST /api/vehicles/save
-  // 3. 如有 STEP 轮廓, 额外保存 outline 文件 + 设置 outline_path
-  // 4. 切换到校核页
+  // 1. 收集参数: wiz-yaw/pitch/corner/ipd + wiz-pvt/cz/eye/gf/gr 坐标
+  // 2. 组装 modena.json 格式的 vehicle JSON (snake_case + m)
+  // 3. 如有 mirrorOutline: 保存 outline 文件, JSON 加 mirror.outline_path
+  // 4. 如有 rwOutline: 保存 rear-window 文件, JSON 加 rear_window.outline_path
+  // 5. POST /api/vehicles/save (复用现有保存 API)
+  // 6. 切换到校核页: showPage('inner') + loadVehicleConfig(新路径) + doVerify()
 }
 ```
 
