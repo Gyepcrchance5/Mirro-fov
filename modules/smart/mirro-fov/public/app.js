@@ -371,8 +371,10 @@
           line: { color: C.projection, width: 2, dash: 'dash' }, name: '覆盖区(3点凸包)', opacity: 0.8 });
       }
     }
-    // 画幅范围 (以 CAS 外框为准)
-    const pad = Math.max(rwHw, rwHh) * 0.30 + 10;
+    // 画幅范围: padding 按短边算, 避免扁形状被大量留白挤占
+    const rwW = Math.max(...xs) - Math.min(...xs);
+    const rwH = Math.max(...ys) - Math.min(...ys);
+    const pad = Math.min(rwW, rwH) * 0.15 + 20;
     const nIn = rw.centerLines.filter(c => c.through).length;
     const tzLabel = rw.hasTz ? '透光区' : 'CAS框';
     const pass = rw.pass;
@@ -382,7 +384,7 @@
       borderwidth: 2, borderpad: 6, align: 'center' };
     const layout = {
       xaxis: { title: 'u (玻璃宽向, mm)', range: [Math.min(...xs) - pad, Math.max(...xs) + pad],
-               scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+               gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       yaxis: { title: 'v (玻璃上向, mm)', range: [Math.min(...ys) - pad, Math.max(...ys) + pad],
                gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       margin: { l: 50, r: 20, t: 20, b: 40 },
