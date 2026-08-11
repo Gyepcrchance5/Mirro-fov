@@ -70,7 +70,21 @@ function padToN(arr, n) {
   return out;
 }
 
+// 加载后挡风完整轮廓 (STEP 采样, 可选)
+function _loadRwOutlineFull(cfgPath, rw) {
+  if (!rw.outline_path) return null;
+  try {
+    const rwPath = path.join(path.dirname(cfgPath), rw.outline_path);
+    const rwRaw = JSON.parse(fs.readFileSync(rwPath, 'utf8'));
+    if (rwRaw.outline_mm && rwRaw.outline_mm.length >= 3) {
+      return rwRaw.outline_mm.map(p => p[0] == null ? [NaN, NaN, NaN] : [p[0] / 1000, p[1] / 1000, p[2] / 1000]);
+    }
+  } catch (e) { /* 缺失/损坏 */ }
+  return null;
+}
+
 function loadVehicleJson(cfgPath) {
+  // 统一标准: 与 Python 相同的字段结构 (snake_case + 米) + JSON 格式。
   // 统一标准: 与 Python 相同的字段结构 (snake_case + 米) + JSON 格式。
   // 读入后转 mm 供前端显示 (前端仍读 widthMM/pvMM 等扁平字段, 界面零改动)。
   const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
@@ -96,6 +110,17 @@ function loadVehicleJson(cfgPath) {
       }
     } catch (e) { /* outline 缺失/损坏, 退回圆角矩形 */ }
   }
+  // 可选: 后挡风完整轮廓 (STEP 采样, 同目录 rear_window.outline_path)
+  let rwOutlineFull = null;
+  if (rw.outline_path) {
+    try {
+      const rwPath = path.join(path.dirname(cfgPath), rw.outline_path);
+      const rwRaw = JSON.parse(fs.readFileSync(rwPath, 'utf8'));
+      if (rwRaw.outline_mm && rwRaw.outline_mm.length >= 3) {
+        rwOutlineFull = rwRaw.outline_mm.map(p => [p[0] / 1000, p[1] / 1000, p[2] / 1000]); // mm→m
+      }
+    } catch (e) { /* 缺失/损坏, 退回 4 点简化轮廓 */ }
+  }
   // 米→毫米 + round3 修约 (对齐 Python dashboard.py: round(×1000,3), 消除浮点精度尾巴)
   const x1000 = v => [round3(v[0] * 1000), round3(v[1] * 1000), round3(v[2] * 1000)];
   return {
@@ -111,6 +136,7 @@ function loadVehicleJson(cfgPath) {
     regulation: raw.regulation || { far_distance: 60.0, required_width_at_far: 20.0 },
     groundZ: gz,
     outlineLocal,
+    rwOutlineFull,
   };
 }
 
@@ -145,6 +171,7 @@ function loadDefaultConfig() {
     driver: { eyeCenter: d.eye_center, ipd: d.interpupillary_distance },
     ground: (g.front_mid && g.rear_mid) ? { front: g.front_mid, rear: g.rear_mid } : null,
     rearWindow: rw.outline ? { outline: rw.outline, transparentZone: (rw.transparent_zone && rw.transparent_zone.length >= 3) ? rw.transparent_zone : rw.outline } : null,
+    rearWindowFull: _loadRwOutlineFull(DEFAULT_VEHICLE, rw),
     visualization: { groundZ: (raw.visualization && raw.visualization.ground_plane_z) || 0 },
     regulation: {
       farDistance: raw.regulation.far_distance,
@@ -369,6 +396,7 @@ router.get('/api/config', (req, res) => {
       rwMM: cfg.rwMM, rwTMM: cfg.rwTMM,
       groundZ: cfg.groundZ,
       outlineLocal: cfg.outlineLocal,
+      rwOutlineFull: cfg.rwOutlineFull,
       farDist: cfg.regulation.far_distance, reqWidth: cfg.regulation.required_width_at_far,
     });
   } catch (e) {

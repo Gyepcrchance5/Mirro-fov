@@ -87,22 +87,14 @@ function checkLineThroughRearWindow(p1, p2, rearWindow) {
 }
 
 /**
- * 后挡风视图 2D 局部坐标 (u-v, in-plane, mm) — 等价 Python build_rear_window_view_fig 的 to2d
- * 坐标轴: width_vec = +Y 在平面上的投影; up_vec = n × width_vec (取 +Z 分量为正)
+ * 后挡风视图 2D 局部坐标 (u-v, mm) — 从车后看, 直接用 Y-Z 投影
+ * u = Y (左右, +Y=右), v = Z (上下, +Z=上)
+ * 不依赖平面法线, 保证任意倾斜角度下 "上" = 整车 Z+
  */
 function buildProjection(rearWindow) {
-  const n = rearWindow.planeNormal;
-  const yAxis = [0, 1, 0];
-  let widthVec = vec3Sub(yAxis, vec3Scale(n, vec3Dot(yAxis, n)));
-  if (vec3Norm(widthVec) < 1e-9) {
-    const zAxis = [0, 0, 1];
-    widthVec = vec3Sub(zAxis, vec3Scale(n, vec3Dot(zAxis, n)));
-  }
-  widthVec = vec3Normalize(widthVec);
-  let upVec = vec3Cross(n, widthVec);
-  upVec = vec3Normalize(upVec);
-  if (upVec[2] < 0) upVec = vec3Scale(upVec, -1);
   const origin = rearWindow.planePoint;
+  const widthVec = [0, 1, 0];  // Y 轴
+  const upVec = [0, 0, 1];     // Z 轴
 
   function to2d(p) {
     const off = vec3Sub(p, origin);

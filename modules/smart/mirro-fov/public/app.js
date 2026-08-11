@@ -41,6 +41,7 @@
   let currentPath = null;
   let rwDirty = false; // 后挡风 CAS 卡是否被用户编辑过
   let currentOutlineLocal = null; // 真实反射区轮廓 [[lx,ly] mm] (STEP 采样, 从车型加载)
+  let currentRwOutline = null;   // 后挡风完整轮廓 [[x,y,z] m] (STEP 采样, 从车型加载)
 
   // ====== 参数收集 ======
   const pv = (el, def) => { const v = parseFloat(el.value); return isNaN(v) ? def : v; };
@@ -89,7 +90,7 @@
       groundZ: p.gfMM[2] / 1000,
       ground: { front: mm(p.gfMM), rear: mm(p.grMM) },
       rearWindow: {
-        outline: dedupeOutline(p.rwMM).map(mm),
+        outline: currentRwOutline || dedupeOutline(p.rwMM).map(mm),
         transparentZone: p.rwTMM.map(mm),
       },
       outlineLocal: currentOutlineLocal,
@@ -549,6 +550,7 @@
     }
     rwDirty = false;
     currentOutlineLocal = cfg.outlineLocal || null;
+    currentRwOutline = cfg.rwOutlineFull || null;
     elLastAngles.textContent = `已加载车型: ${cfg.name}`;
   }
 
