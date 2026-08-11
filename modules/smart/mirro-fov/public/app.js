@@ -529,6 +529,9 @@
   }
 
   async function loadVehicleConfig(path) {
+    // 先清空 STEP 轮廓 (防止上一个车型的数据残留)
+    currentOutlineLocal = null;
+    currentRwOutline = null;
     const cfg = await callJson('/config?path=' + encodeURIComponent(path || ''));
     currentPath = cfg.path;
     // 填充全部表单

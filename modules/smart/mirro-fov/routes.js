@@ -275,19 +275,22 @@ function fullVerify(params) {
     const proj = buildProjection(rw);
     const outline2D = rw.outline.map(proj.to2d);
     const tz2D = rw.tz.map(proj.to2d);
-    // 中心眼 3 线 (前 3 条), CAS 边映射: BL→(0,1) BR→(2,3) +X→(3,0)
-    const casEdges = { 'BL': [0, 1], 'BR': [2, 3], '+X': [3, 0] };
+    // 中心眼 3 线 (前 3 条), 距边距离: 对整个轮廓找最近边
     const centerLines = result.lineDetails.slice(0, 3).map(ld => {
-      const pts = [];
       const p = { label: `C→${ld.endpointLabel}`, through: ld.throughTransparent };
       if (ld.rearWindowHit) {
         const [u, v] = proj.to2d(ld.rearWindowHit);
         p.hit2D = [round1(u), round1(v)];
-        const [ei0, ei1] = casEdges[ld.endpointLabel] || [0, 1];
-        const [ax, ay] = outline2D[ei0], [bx, by] = outline2D[ei1];
-        const { dist, ex, ey } = edgeDistanceTo(u, v, ax, ay, bx, by);
-        p.dist = round1(dist);
-        p.near = [round1(ex), round1(ey)];
+        // 遍历轮廓所有边, 找最近的那条
+        let bestDist = Infinity, bestEx = 0, bestEy = 0;
+        for (let i = 0; i < outline2D.length; i++) {
+          const j = (i + 1) % outline2D.length;
+          const [ax, ay] = outline2D[i], [bx, by] = outline2D[j];
+          const d = edgeDistanceTo(u, v, ax, ay, bx, by);
+          if (d.dist < bestDist) { bestDist = d.dist; bestEx = d.x; bestEy = d.y; }
+        }
+        p.dist = round1(bestDist);
+        p.near = [round1(bestEx), round1(bestEy)];
       }
       return p;
     });
