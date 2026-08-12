@@ -652,12 +652,28 @@ router.post('/api/step/upload', express.json({ limit: '100mb' }), async (req, re
       <button id="wiz-parse-mirror" class="btn btn-solid btn-sm">解析镜面轮廓</button>
       <div id="wiz-mirror-result" class="text-muted mt-1" style="font-size:12px">等待上传...</div>
     </div></div>
+    <!-- 镜面轮廓预览 (解析后显示) -->
+    <div class="panel-frame mb-2" id="wiz-mirror-preview" style="display:none">
+      <div class="panel-bar">
+        <span class="panel-title">镜面轮廓预览</span>
+        <span class="panel-count" id="wiz-mirror-preview-count"></span>
+      </div>
+      <div id="wiz-mirror-plot" style="width:100%;height:300px"></div>
+    </div>
     <div class="section-title">后挡风轮廓 (可选, 可跳过)</div>
     <div class="card shadow-sm mb-2"><div class="card-body py-2 px-2">
       <input id="wiz-rw-step" type="file" accept=".stp,.step" class="form-control form-control-sm mb-2">
       <button id="wiz-parse-rw" class="btn btn-solid btn-sm">解析后挡风轮廓</button>
       <div id="wiz-rw-result" class="text-muted mt-1" style="font-size:12px">可跳过, 后续用 3DE 手动选点</div>
     </div></div>
+    <!-- 后挡风轮廓预览 (解析后显示) -->
+    <div class="panel-frame mb-2" id="wiz-rw-preview" style="display:none">
+      <div class="panel-bar">
+        <span class="panel-title">后挡风轮廓预览</span>
+        <span class="panel-count" id="wiz-rw-preview-count"></span>
+      </div>
+      <div id="wiz-rw-plot" style="width:100%;height:300px"></div>
+    </div>
     <button id="wiz-step1-prev" class="btn btn-outline-accent btn-sm me-1">上一步</button>
     <button id="wiz-step1-next" class="btn btn-solid btn-sm">下一步</button>
   </div>
@@ -760,7 +776,7 @@ function initWizardInner() {
   $('wiz-save-btn').addEventListener('click', saveNewVehicle);
 }
 
-// STEP 上传 + 解析
+// STEP 上传 + 解析 + 预览
 async function parseStepFile(fileInput, resultDiv, type) {
   const file = fileInput.files[0];
   if (!file) { resultDiv.textContent = '请先选择文件'; return; }
@@ -776,14 +792,47 @@ async function parseStepFile(fileInput, resultDiv, type) {
       const data = await resp.json();
       if (data.ok) {
         resultDiv.innerHTML = `✅ 提取 ${data.outline_count} 点轮廓`;
-        if (type === 'mirror') wizardData.mirrorOutline = data.outline;
-        else wizardData.rwOutline = data.outline;
+        if (type === 'mirror') {
+          wizardData.mirrorOutline = data.outline;
+          renderWizardPreview('wiz-mirror-plot', 'wiz-mirror-preview', 'wiz-mirror-preview-count',
+            data.outline_local || data.outline, '镜面 (u-v mm)');
+        } else {
+          wizardData.rwOutline = data.outline;
+          renderWizardPreview('wiz-rw-plot', 'wiz-rw-preview', 'wiz-rw-preview-count',
+            data.outline, '后挡风 (Y-Z mm)');
+        }
       } else {
         resultDiv.innerHTML = `❌ ${data.error}`;
       }
     } catch (err) { resultDiv.innerHTML = `❌ ${err.message}`; }
   };
   reader.readAsBinaryString(file);
+}
+
+// 预览渲染 (简单 2D Plotly 线图, 用现有 L0 样式)
+function renderWizardPreview(plotDiv, previewDiv, countDiv, points, title) {
+  if (typeof Plotly === 'undefined' || !points || points.length < 3) return;
+  // 镜面: outline_local_mm = [[lx,ly],...] (2D); 后挡风: outline_mm = [[x,y,z],...] (3D)
+  const is2D = points[0].length === 2;
+  const xs = points.map(p => is2D ? p[0] : p[1]); // 镜面用 lx, 后挡风用 Y
+  const ys = points.map(p => is2D ? p[1] : p[2]); // 镜面用 ly, 后挡风用 Z
+  // 闭合
+  xs.push(xs[0]); ys.push(ys[0]);
+  $(previewDiv).style.display = '';
+  $(countDiv).textContent = `${points.length} 点`;
+  Plotly.newPlot(plotDiv, [{
+    x: xs, y: ys, mode: 'lines+markers',
+    line: { color: '#0071e3', width: 2 },
+    marker: { size: 3, color: '#0071e3' },
+    fill: 'toself', fillcolor: 'rgba(0,113,227,0.08)',
+  }], {
+    xaxis: { title: 'u (mm)', gridcolor: '#f0f0f2' },
+    yaxis: { title: 'v (mm)', gridcolor: '#f0f0f2' },
+    margin: { l: 50, r: 10, t: 10, b: 40 },
+    paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+    font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
+    title: { text: title, font: { size: 12, color: '#6e6e73' } },
+  }, { responsive: true });
 }
 
 // 3DE 读取 (复用现有 catia_extract, 读完后填充 wiz 点输入框)
