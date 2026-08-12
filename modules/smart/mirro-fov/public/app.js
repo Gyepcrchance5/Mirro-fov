@@ -97,16 +97,20 @@
     };
   }
 
-  // ====== 页面路由 (landing / inner / exterior) ======
-  const landingPage = $('landing-page'), innerPage = $('inner-page'), exteriorPage = $('exterior-page');
-  $('enter-inner-btn').addEventListener('click', () => showPage('inner'));
-  $('enter-exterior-btn').addEventListener('click', () => showPage('exterior'));
-  $('back-btn').addEventListener('click', () => showPage('landing'));
-  $('ext-back-btn').addEventListener('click', () => showPage('landing'));
+  // ====== 页面路由 (landing / mirror-type / inner / exterior / wizard) ======
+  // wizardMode: 'verify' 或 'new' — 决定镜子类型选择后进校核页还是向导
+  let wizardMode = 'verify';
+  const pages = {
+    landing: $('landing-page'),
+    'mirror-type': $('mirror-type-page'),
+    inner: $('inner-page'),
+    exterior: $('exterior-page'),
+    'wizard-inner': $('wizard-inner-page'),
+  };
   function showPage(name) {
-    landingPage.style.display = name === 'landing' ? '' : 'none';
-    innerPage.style.display = name === 'inner' ? '' : 'none';
-    exteriorPage.style.display = name === 'exterior' ? '' : 'none';
+    Object.entries(pages).forEach(([k, el]) => {
+      if (el) el.style.display = k === name ? '' : 'none';
+    });
     if (name === 'inner' && !innerPage.__inited) {
       innerPage.__inited = true;
       initInner();
@@ -115,7 +119,39 @@
       exteriorPage.__inited = true;
       initExterior();
     }
+    if (name === 'wizard-inner' && !$('wizard-inner-page').__inited) {
+      $('wizard-inner-page').__inited = true;
+      initWizardInner();
+    }
+    if (name === 'landing') wizardMode = 'verify';
   }
+
+  // Landing 动作优先: 校核/新建 → 镜子类型选择
+  $('enter-verify-btn').addEventListener('click', () => {
+    wizardMode = 'verify';
+    $('type-title').textContent = '选择镜子类型 · 校核已有车型';
+    showPage('mirror-type');
+  });
+  $('enter-new-btn').addEventListener('click', () => {
+    wizardMode = 'new';
+    $('type-title').textContent = '选择镜子类型 · 新建车型';
+    showPage('mirror-type');
+  });
+  $('type-back-btn').addEventListener('click', () => showPage('landing'));
+  $('select-inner-btn').addEventListener('click', () => {
+    if (wizardMode === 'new') showPage('wizard-inner');
+    else showPage('inner');
+  });
+  $('select-exterior-btn').addEventListener('click', () => {
+    if (wizardMode === 'new') {
+      alert('外镜新建向导待实现 (规划中), 当前可先校核已有外镜车型');
+      showPage('exterior');
+    } else {
+      showPage('exterior');
+    }
+  });
+  $('back-btn').addEventListener('click', () => showPage('mirror-type'));
+  $('ext-back-btn').addEventListener('click', () => showPage('mirror-type'));
 
   // ====== 镜中倒影 (现有逻辑保留) ======
   function autoTextPos(lx, ly, allPts, hw, hh) {
@@ -558,6 +594,31 @@
     currentOutlineLocal = cfg.outlineLocal || null;
     currentRwOutline = cfg.rwOutlineFull || null;
     elLastAngles.textContent = `已加载车型: ${cfg.name}`;
+    // 参数卡只读逻辑: 有 STEP 轮廓时, 镜面尺寸/后挡风 CAS 卡只读
+    updateReadonlyState(cfg);
+  }
+
+  // 有 STEP 轮廓时, 相关参数卡只读 (轮廓已定义形状, 编辑会破坏一致性)
+  function updateReadonlyState(cfg) {
+    const hasOutline = !!cfg.outlineLocal;
+    const hasRwOutline = !!cfg.rwOutlineFull;
+    // 镜面尺寸卡 (width/height/corner-r): 有镜面轮廓则只读
+    ['width', 'height', 'corner-r'].forEach(id => {
+      const el = $(id);
+      if (el) { el.readOnly = hasOutline; el.style.opacity = hasOutline ? '0.6' : ''; }
+    });
+    // 尺寸卡副标题
+    const sizeHeader = document.querySelector('#param-row .col:nth-child(2) .card-header small');
+    if (sizeHeader) sizeHeader.textContent = hasOutline ? `STEP ${cfg.outlineLocal.length} 点轮廓` : '反射涂层有效区域';
+    // 后挡风 CAS 卡: 有后挡风轮廓则只读
+    for (let i = 0; i < 7; i++) {
+      ['x', 'y', 'z'].forEach(ax => {
+        const el = $('rw-c' + i + '-' + ax);
+        if (el) { el.readOnly = hasRwOutline; el.style.opacity = hasRwOutline ? '0.6' : ''; }
+      });
+    }
+    const rwTitle = $('rw-section-title');
+    if (rwTitle) rwTitle.textContent = hasRwOutline ? `后挡风 STEP ${cfg.rwOutlineFull.length} 点轮廓` : '后挡风 CAS 轮廓 (7 点)';
   }
 
   async function doSave() {
@@ -740,6 +801,228 @@
     $('ext-save-as-btn').addEventListener('click', () => alert('外镜另存为待实现 (同上)。'));
     $('ext-delete-btn').addEventListener('click', () => alert('外镜车型删除待实现。'));
     loadExtVehicles().then(() => loadExtConfig().then(() => doExtVerify()));
+  }
+
+  // ====== 内后视镜新建向导 ======
+  const wizardData = { name: '', mirrorOutline: null, rwOutline: null };
+
+  function wizardNext(current) {
+    document.querySelector('.wizard-step[data-step="' + current + '"]').style.display = 'none';
+    document.querySelector('.wizard-step[data-step="' + (current + 1) + '"]').style.display = '';
+  }
+  function wizardPrev(current) {
+    document.querySelector('.wizard-step[data-step="' + current + '"]').style.display = 'none';
+    document.querySelector('.wizard-step[data-step="' + (current - 1) + '"]').style.display = '';
+  }
+
+  // 动态生成 Step 2 点坐标输入卡 (5 个点, 结构同校核页参数卡)
+  const WIZ_POINTS = [
+    { id: 'pvt', label: '球铰 pivot', default: [2883.07, 0, 1441.017] },
+    { id: 'cz', label: '镜面中心', default: [2909.215, 0.007, 1441.88] },
+    { id: 'eye', label: '眼点中心', default: [3243.09, -385, 1372] },
+    { id: 'gf', label: '地面前端', default: [500, 0, 193.209] },
+    { id: 'gr', label: '地面后端', default: [5900, 0, 193.209] },
+  ];
+  function buildWizardPoints() {
+    const grid = $('wiz-points-grid');
+    grid.innerHTML = '';
+    for (const pt of WIZ_POINTS) {
+      const col = document.createElement('div');
+      col.className = 'col';
+      col.style.minWidth = '130px';
+      const axes = ['X', 'Y', 'Z'];
+      col.innerHTML = `
+        <div class="card shadow-sm h-100">
+          <div class="card-header py-1 px-2"><div class="card-title mb-0">${pt.label}</div></div>
+          <div class="card-body py-2 px-2">
+            ${axes.map((ax, i) => `<div class="mb-2"><label class="mb-0" style="font-size:13px">${ax} </label><small class="unit">mm</small><input id="wiz-${pt.id}-${ax.toLowerCase()}" type="number" step="any" class="form-control form-control-sm" value="${pt.default[i]}"></div>`).join('')}
+          </div>
+        </div>`;
+      grid.appendChild(col);
+    }
+  }
+
+  // STEP 上传 + 解析 + 预览
+  async function parseStepFile(fileInput, resultDiv, type) {
+    const file = fileInput.files[0];
+    if (!file) { resultDiv.textContent = '请先选择文件'; return; }
+    resultDiv.textContent = '解析中... (大文件可能需要 30 秒)';
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const base64 = btoa(e.target.result);
+        const resp = await fetch(API_BASE + '/step/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, content: base64, type }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          resultDiv.innerHTML = `✅ 提取 ${data.outline_count} 点轮廓`;
+          if (type === 'mirror') {
+            wizardData.mirrorOutline = data.outline;
+            renderWizardPreview('wiz-mirror-plot', 'wiz-mirror-preview', 'wiz-mirror-preview-count', data.outline, '镜面轮廓');
+          } else {
+            wizardData.rwOutline = data.outline;
+            renderWizardPreview('wiz-rw-plot', 'wiz-rw-preview', 'wiz-rw-preview-count', data.outline, '后挡风轮廓');
+          }
+        } else {
+          resultDiv.innerHTML = `❌ ${data.error}`;
+        }
+      } catch (err) { resultDiv.innerHTML = `❌ ${err.message}`; }
+    };
+    reader.readAsBinaryString(file);
+  }
+
+  // 轮廓预览 (Plotly 2D, 后挡风用 Y-Z, 镜面用 u-v)
+  function renderWizardPreview(plotDiv, previewDiv, countDiv, outline, title) {
+    if (typeof Plotly === 'undefined' || !outline || outline.length < 3) return;
+    const is2D = outline[0].length === 2;
+    const xs = outline.map(p => is2D ? p[0] : p[1]);
+    const ys = outline.map(p => is2D ? p[1] : p[2]);
+    xs.push(xs[0]); ys.push(ys[0]);
+    $(previewDiv).style.display = '';
+    $(countDiv).textContent = outline.length + ' 点';
+    Plotly.newPlot(plotDiv, [{
+      x: xs, y: ys, mode: 'lines+markers',
+      line: { color: '#0071e3', width: 2 },
+      marker: { size: 3, color: '#0071e3' },
+      fill: 'toself', fillcolor: 'rgba(0,113,227,0.08)',
+    }], {
+      xaxis: { title: 'u (mm)', gridcolor: '#f0f0f2' },
+      yaxis: { title: 'v (mm)', gridcolor: '#f0f0f2' },
+      margin: { l: 50, r: 10, t: 20, b: 40 },
+      paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+      font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
+      title: { text: title, font: { size: 12, color: '#6e6e73' } },
+    }, { responsive: true });
+  }
+
+  // 3DE 读取点坐标 (复用 doCatia 流程)
+  async function doWizCatia() {
+    const btn = $('wiz-catia-btn');
+    if (!confirm('将从 3DE 读取点坐标。\n\n请在运行本服务的终端窗口中完成选点。\n\n确定开始？')) return;
+    btn.disabled = true; btn.textContent = '读取中…';
+    try {
+      const r = await fetch(API_BASE + '/catia', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error);
+      // 读到的车型配置, 填充向导点坐标 (从 JSON 文件读)
+      const cfg = await (await fetch(API_BASE + '/config?path=' + encodeURIComponent(d.output))).json();
+      fillWizardPointsFromConfig(cfg);
+      alert('已从 3DE 读取并填充点坐标。请确认后继续。');
+    } catch (e) {
+      alert('3DE 读取失败: ' + e.message + '\n\n请确认 3DE 已启动、Python/pywin32 已装、并在服务终端完成操作。');
+    } finally { btn.disabled = false; btn.textContent = '从 3DE 读取'; }
+  }
+
+  function fillWizardPointsFromConfig(cfg) {
+    const map = { 'pvt-x': 'pvMM', 'pvt-y': 'pvMM', 'pvt-z': 'pvMM',
+                  'cz-x': 'czMM', 'cz-y': 'czMM', 'cz-z': 'czMM',
+                  'eye-x': 'eyeMM', 'eye-y': 'eyeMM', 'eye-z': 'eyeMM',
+                  'gf-x': 'gfMM', 'gf-y': 'gfMM', 'gf-z': 'gfMM',
+                  'gr-x': 'grMM', 'gr-y': 'grMM', 'gr-z': 'grMM' };
+    for (const [wizId, cfgField] of Object.entries(map)) {
+      const el = $('wiz-' + wizId);
+      if (el && cfg[cfgField]) {
+        const idx = { x: 0, y: 1, z: 2 }[wizId.slice(-1)];
+        el.value = cfg[cfgField][idx];
+      }
+    }
+    if (cfg.yawDeg != null) $('wiz-yaw').value = cfg.yawDeg;
+    if (cfg.pitchDeg != null) $('wiz-pitch').value = cfg.pitchDeg;
+    if (cfg.cornerRadiusMM != null) $('wiz-corner').value = cfg.cornerRadiusMM;
+    if (cfg.ipdMM != null) $('wiz-ipd').value = cfg.ipdMM;
+  }
+
+  // 保存新车型 → 切校核页
+  async function saveNewVehicle() {
+    const name = ($('wiz-name').value || '新车型').trim();
+    const gfZ = parseFloat($('wiz-gf-z').value) || 0;
+    // 后挡风: 有 STEP 轮廓则省略 (save-outline 单独写), 无则用简化 4 点
+    const defaultRw = [[4.54, -0.57, 1.49], [4.71, -0.51, 1.45], [4.71, 0.51, 1.45], [4.54, 0.57, 1.49]];
+    const payload = {
+      name,
+      widthMM: 224.796, heightMM: 50.794,
+      cornerRadiusMM: parseFloat($('wiz-corner').value || 10),
+      yawDeg: parseFloat($('wiz-yaw').value || -23.5),
+      pitchDeg: parseFloat($('wiz-pitch').value || 5.0),
+      pvMM: [parseFloat($('wiz-pvt-x').value), parseFloat($('wiz-pvt-y').value), parseFloat($('wiz-pvt-z').value)],
+      czMM: [parseFloat($('wiz-cz-x').value), parseFloat($('wiz-cz-y').value), parseFloat($('wiz-cz-z').value)],
+      eyeMM: [parseFloat($('wiz-eye-x').value), parseFloat($('wiz-eye-y').value), parseFloat($('wiz-eye-z').value)],
+      ipdMM: parseFloat($('wiz-ipd').value || 65),
+      gfMM: [parseFloat($('wiz-gf-x').value), parseFloat($('wiz-gf-y').value), gfZ],
+      grMM: [parseFloat($('wiz-gr-x').value), parseFloat($('wiz-gr-y').value), parseFloat($('wiz-gr-z').value)],
+      groundZ: gfZ / 1000,
+      rwMM: defaultRw,
+      rwTMM: [],
+    };
+
+    try {
+      // 1. 保存车型 JSON (复用现有 save 接口)
+      const resp = await fetch(API_BASE + '/vehicles/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await resp.json();
+      if (!d.ok) throw new Error(d.error);
+
+      // 2. 如有 STEP 轮廓, 保存 outline 文件并设 outline_path
+      if (wizardData.mirrorOutline || wizardData.rwOutline) {
+        await saveWizardOutlines(name, d.path);
+      }
+
+      // 3. 切校核页并加载新车型
+      await loadVehicles();
+      await loadVehicleConfig(d.path);
+      showPage('inner');
+      await doVerify();
+    } catch (e) {
+      alert('保存失败: ' + e.message);
+    }
+  }
+
+  // 保存向导提取的轮廓到 data/vehicles/<name>.*.json 并更新车型 outline_path
+  async function saveWizardOutlines(name, vehiclePath) {
+    const safe = name.replace(/[\\/:*?"<>|]/g, '_');
+    // 镜面轮廓 (outline_local_mm, 供 isOnReflectiveSurface)
+    if (wizardData.mirrorOutline) {
+      const local = wizardData.mirrorOutline; // [u,v] mm 已由后端转换
+      const outlineFile = { source: 'wizard_step', outline_local_mm: local, outline_count: local.length, unit: 'mm' };
+      const saveResp = await fetch(API_BASE + '/vehicles/save-outline', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehiclePath, kind: 'mirror', outlineFile }),
+      });
+      const sd = await saveResp.json();
+      if (!sd.ok) throw new Error(sd.error);
+    }
+    // 后挡风轮廓 (outline_mm, 3D)
+    if (wizardData.rwOutline) {
+      const saveResp = await fetch(API_BASE + '/vehicles/save-outline', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehiclePath, kind: 'rear-window', outlineFile: { source: 'wizard_step', outline_mm: wizardData.rwOutline, outline_count: wizardData.rwOutline.length, unit: 'mm' } }),
+      });
+      const sd = await saveResp.json();
+      if (!sd.ok) throw new Error(sd.error);
+    }
+  }
+
+  function initWizardInner() {
+    buildWizardPoints();
+    $('wiz-inner-back').addEventListener('click', () => showPage('mirror-type'));
+    $('wiz-step0-next').addEventListener('click', () => { wizardData.name = $('wiz-name').value || '新车型'; wizardNext(0); });
+    $('wiz-step1-prev').addEventListener('click', () => wizardPrev(1));
+    $('wiz-step1-next').addEventListener('click', () => wizardNext(1));
+    $('wiz-step2-prev').addEventListener('click', () => wizardPrev(2));
+    $('wiz-step2-next').addEventListener('click', () => wizardNext(2));
+    $('wiz-step3-prev').addEventListener('click', () => wizardPrev(3));
+    $('wiz-parse-mirror').addEventListener('click', () => parseStepFile($('wiz-mirror-step'), $('wiz-mirror-result'), 'mirror'));
+    $('wiz-parse-rw').addEventListener('click', () => parseStepFile($('wiz-rw-step'), $('wiz-rw-result'), 'rear-window'));
+    $('wiz-catia-btn').addEventListener('click', doWizCatia);
+    $('wiz-save-btn').addEventListener('click', saveNewVehicle);
   }
 
   async function loadExtVehicles() {

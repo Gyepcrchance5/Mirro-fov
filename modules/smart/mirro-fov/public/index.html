@@ -13,26 +13,48 @@
 <body>
   <div class="container-fluid py-3 px-3" style="max-width:1600px">
 
-    <!-- ═══════ 统一入口页 (landing) ═══════ -->
+    <!-- ═══════ 统一入口页 (landing, 动作优先) ═══════ -->
     <div id="landing-page">
       <div class="landing-inner">
         <h2 class="landing-title">GB 15084 后视镜视野校核系统</h2>
         <p class="landing-sub">依据 GB 15084-2022 法规，三维几何自动校核内 / 外后视镜视野</p>
         <div class="landing-cards">
-          <div class="landing-card landing-card-inner">
-            <h4>内后视镜</h4>
-            <h6 class="text-muted">GB 15084 I 类</h6>
-            <p class="landing-desc">五线法主判据 · 镜中倒影 · 后挡风穿透</p>
-            <span class="badge" style="background:#34c759">已就绪</span>
-            <button id="enter-inner-btn" class="btn btn-primary btn-lg landing-btn">进入</button>
+          <div class="landing-card landing-card-verify">
+            <h4>校核已有车型</h4>
+            <h6 class="text-muted">加载已保存数据 · 调整参数 · 查看结果</h6>
+            <p class="landing-desc">选择已有车型数据，校核视野合规性</p>
+            <span class="badge" style="background:#34c759">就绪</span>
+            <button id="enter-verify-btn" class="btn btn-primary btn-lg landing-btn">进入</button>
           </div>
-          <div class="landing-card landing-card-exterior">
-            <h4>外后视镜</h4>
-            <h6 class="text-muted">GB 15084 III 类</h6>
-            <p class="landing-desc">凸球面镜 · 双眼交集 · 地面三角形视野</p>
-            <span class="badge" style="background:#34c759">已就绪</span>
-            <button id="enter-exterior-btn" class="btn btn-primary btn-lg landing-btn">进入</button>
+          <div class="landing-card landing-card-new">
+            <h4>新建车型</h4>
+            <h6 class="text-muted">STEP 轮廓 + 3DE 选点 + 参数</h6>
+            <p class="landing-desc">从 STEP 提取轮廓，创建新车型并校核</p>
+            <span class="badge" style="background:#0071e3">向导</span>
+            <button id="enter-new-btn" class="btn btn-primary btn-lg landing-btn">开始</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ 镜子类型选择页 (校核/新建共用) ═══════ -->
+    <div id="mirror-type-page" style="display:none">
+      <div class="top-bar">
+        <button id="type-back-btn" class="btn btn-outline-secondary btn-sm me-2">← 返回</button>
+        <h4 class="top-title mb-0" id="type-title">选择镜子类型</h4>
+      </div>
+      <div class="landing-cards" style="margin-top:40px">
+        <div class="landing-card landing-card-inner">
+          <h4>内后视镜</h4>
+          <h6 class="text-muted">GB 15084 I 类 · 平面镜</h6>
+          <p class="landing-desc">五线法 · 镜中倒影 · 后挡风穿透</p>
+          <button id="select-inner-btn" class="btn btn-solid btn-lg landing-btn">选择</button>
+        </div>
+        <div class="landing-card landing-card-exterior">
+          <h4>外后视镜</h4>
+          <h6 class="text-muted">GB 15084 III 类 · 凸球面镜</h6>
+          <p class="landing-desc">球面反射 · 双眼交集 · 地面三角形视野</p>
+          <button id="select-exterior-btn" class="btn btn-solid btn-lg landing-btn">选择</button>
         </div>
       </div>
     </div>
@@ -202,6 +224,103 @@
         <div id="rear-window-view" style="width:100%;height:600px"></div>
       </div>
 
+    </div>
+
+    <!-- ═══════ 内后视镜新建向导 ═══════ -->
+    <div id="wizard-inner-page" style="display:none">
+      <div class="top-bar">
+        <button id="wiz-inner-back" class="btn btn-outline-secondary btn-sm me-2">← 返回</button>
+        <h4 class="top-title mb-0">新建内后视镜车型</h4>
+      </div>
+
+      <!-- Step 0: 基本信息 -->
+      <div class="wizard-step" data-step="0">
+        <div class="section-title">步骤 1/4: 基本信息</div>
+        <div class="row g-2 mb-2 param-row">
+          <div class="col" style="min-width:220px">
+            <div class="card shadow-sm h-100">
+              <div class="card-header py-1 px-2"><div class="card-title mb-0">车型信息</div></div>
+              <div class="card-body py-2 px-2">
+                <div class="mb-2"><label class="mb-0" style="font-size:13px">车型名称 </label><input id="wiz-name" type="text" class="form-control form-control-sm" placeholder="例如: 新车型A"></div>
+                <div class="mb-2"><label class="mb-0" style="font-size:13px">镜子类型 </label><input type="text" class="form-control form-control-sm" value="内后视镜 (I 类)" readonly></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button id="wiz-step0-next" class="btn btn-solid btn-sm">下一步</button>
+      </div>
+
+      <!-- Step 1: 镜面轮廓 (STEP) -->
+      <div class="wizard-step" data-step="1" style="display:none">
+        <div class="section-title">步骤 2/4: 镜面轮廓 (STEP)</div>
+        <div class="card shadow-sm mb-2"><div class="card-body py-2 px-2">
+          <input id="wiz-mirror-step" type="file" accept=".stp,.step" class="form-control form-control-sm mb-2">
+          <button id="wiz-parse-mirror" class="btn btn-solid btn-sm">解析镜面轮廓</button>
+          <div id="wiz-mirror-result" class="text-muted mt-1" style="font-size:12px">等待上传...</div>
+        </div></div>
+        <!-- 镜面轮廓预览 -->
+        <div class="panel-frame mb-2" id="wiz-mirror-preview" style="display:none">
+          <div class="panel-bar">
+            <span class="panel-title">镜面轮廓预览</span>
+            <span class="panel-count" id="wiz-mirror-preview-count"></span>
+          </div>
+          <div id="wiz-mirror-plot" style="width:100%;height:300px"></div>
+        </div>
+        <div class="section-title">后挡风轮廓 (可选, 可跳过)</div>
+        <div class="card shadow-sm mb-2"><div class="card-body py-2 px-2">
+          <input id="wiz-rw-step" type="file" accept=".stp,.step" class="form-control form-control-sm mb-2">
+          <button id="wiz-parse-rw" class="btn btn-solid btn-sm">解析后挡风轮廓</button>
+          <div id="wiz-rw-result" class="text-muted mt-1" style="font-size:12px">可跳过, 后续用 3DE 手动选点</div>
+        </div></div>
+        <div class="panel-frame mb-2" id="wiz-rw-preview" style="display:none">
+          <div class="panel-bar">
+            <span class="panel-title">后挡风轮廓预览</span>
+            <span class="panel-count" id="wiz-rw-preview-count"></span>
+          </div>
+          <div id="wiz-rw-plot" style="width:100%;height:300px"></div>
+        </div>
+        <button id="wiz-step1-prev" class="btn btn-outline-accent btn-sm me-1">上一步</button>
+        <button id="wiz-step1-next" class="btn btn-solid btn-sm">下一步</button>
+      </div>
+
+      <!-- Step 2: 点坐标 -->
+      <div class="wizard-step" data-step="2" style="display:none">
+        <div class="section-title">步骤 3/4: 点坐标</div>
+        <div class="card shadow-sm mb-2"><div class="card-body py-2 px-2">
+          <button id="wiz-catia-btn" class="btn btn-solid btn-sm mb-2">从 3DE 读取</button>
+          <small class="text-muted">或手动输入坐标 (mm)</small>
+          <div class="row g-2 param-row" id="wiz-points-grid"></div>
+        </div></div>
+        <button id="wiz-step2-prev" class="btn btn-outline-accent btn-sm me-1">上一步</button>
+        <button id="wiz-step2-next" class="btn btn-solid btn-sm">下一步</button>
+      </div>
+
+      <!-- Step 3: 参数 + 保存 -->
+      <div class="wizard-step" data-step="3" style="display:none">
+        <div class="section-title">步骤 4/4: 参数 & 保存</div>
+        <div class="row g-2 mb-2 param-row">
+          <div class="col" style="min-width:130px">
+            <div class="card shadow-sm h-100">
+              <div class="card-header py-1 px-2"><div class="card-title mb-0">角度</div></div>
+              <div class="card-body py-2 px-2">
+                <div class="mb-2"><label class="mb-0" style="font-size:13px">yaw </label><small class="unit">°</small><input id="wiz-yaw" type="number" step="any" class="form-control form-control-sm" value="-23.5"></div>
+                <div class="mb-2"><label class="mb-0" style="font-size:13px">pitch </label><small class="unit">°</small><input id="wiz-pitch" type="number" step="any" class="form-control form-control-sm" value="5.0"></div>
+              </div>
+            </div>
+          </div>
+          <div class="col" style="min-width:130px">
+            <div class="card shadow-sm h-100">
+              <div class="card-header py-1 px-2"><div class="card-title mb-0">其他</div></div>
+              <div class="card-body py-2 px-2">
+                <div class="mb-2"><label class="mb-0" style="font-size:13px">圆角R </label><small class="unit">mm</small><input id="wiz-corner" type="number" step="any" class="form-control form-control-sm" value="10"></div>
+                <div class="mb-2"><label class="mb-0" style="font-size:13px">瞳距 </label><small class="unit">mm</small><input id="wiz-ipd" type="number" step="any" class="form-control form-control-sm" value="65"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button id="wiz-step3-prev" class="btn btn-outline-accent btn-sm me-1">上一步</button>
+        <button id="wiz-save-btn" class="btn btn-solid btn-sm">保存并校核</button>
+      </div>
     </div>
 
     <!-- ═══════ 外后视镜页 ═══════ -->
@@ -410,7 +529,7 @@
 
   </div>
 
-  <script src="app.js?v=20260812d"></script>
+  <script src="app.js?v=20260812e"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>

@@ -738,6 +738,110 @@ router.post('/api/catia/exterior', jsonParser, (req, res) => {
   child.on('error', (err) => finish(500, { ok: false, error: `3DE 启动失败: ${friendlyError(err)}` }));
 });
 
+// ---- 新建向导: STEP 上传 + 解析轮廓 (base64 → 临时文件 → spawn Python) ----
+const STEP_TMP_DIR = path.join(__dirname, 'data', 'tmp');
+const STEP_UPLOAD_LIMIT = '100mb';
+router.post('/api/step/upload', express.json({ limit: STEP_UPLOAD_LIMIT }), (req, res) => {
+  const body = req.body || {};
+  const filename = (body.filename || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const content = body.content; // base64
+  const type = body.type || 'mirror'; // mirror | rear-window
+  if (!content) return res.status(400).json({ ok: false, error: '缺少文件内容' });
+
+  try {
+    fs.mkdirSync(STEP_TMP_DIR, { recursive: true });
+    const stepPath = path.join(STEP_TMP_DIR, filename);
+    fs.writeFileSync(stepPath, Buffer.from(content, 'base64'));
+
+    // 按类型 spawn 对应 Python 提取脚本
+    const script = type === 'rear-window' ? 'step_rear_window.py' : 'step_topology.py';
+    // step_topology.py 输出 <step>.mirror-outline.json (不支持 --output); step_rear_window.py 支持 --output
+    const expectedOut = type === 'rear-window'
+      ? path.join(STEP_TMP_DIR, filename + '.outline.json')
+      : path.join(STEP_TMP_DIR, filename.replace(/\.stp$/i, '') + '.mirror-outline.json');
+    try { fs.unlinkSync(expectedOut); } catch (e) { /* 忽略 */ }
+
+    const args = [path.join(__dirname, 'python', script), stepPath];
+    if (type === 'rear-window') args.push('--n', '30', '--output', expectedOut);
+    else args.push('80');
+
+    const child = spawn('python', args, { cwd: PY_PROJECT, shell: process.platform === 'win32' });
+    let done = false;
+    const finish = (status, payload) => { if (!done) { done = true; res.status(status).json(payload); } };
+    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: 'STEP 解析超时 (60 秒)' }); }, 60000);
+
+    child.on('exit', (code) => {
+      clearTimeout(timeout);
+      if (code !== 0 || !fs.existsSync(expectedOut)) {
+        finish(500, { ok: false, error: `STEP 解析失败 (exit ${code})。可能面名不匹配, 需手动指定面 ID。` });
+        return;
+      }
+      try {
+        const outlineJson = JSON.parse(fs.readFileSync(expectedOut, 'utf8'));
+        // 提取轮廓点: step_topology 输出 outline_local_mm (2D), step_rear_window 输出 outline_mm (3D)
+        let outline = null;
+        let count = 0;
+        if (type === 'rear-window' && outlineJson.outline_mm) {
+          outline = outlineJson.outline_mm.map(p => [p[0] / 1000, p[1] / 1000, p[2] / 1000]);
+          count = outline.length;
+        } else if (outlineJson.outline_local_mm) {
+          outline = outlineJson.outline_local_mm;
+          count = outline.length;
+        } else if (outlineJson.outline_global_mm) {
+          outline = outlineJson.outline_global_mm.map(p => [p[0], p[1], p[2]]);
+          count = outline.length;
+        }
+        if (!outline || count < 3) {
+          finish(500, { ok: false, error: 'STEP 解析未产生有效轮廓点' });
+          return;
+        }
+        finish(200, { ok: true, outline, outline_count: count, face_id: outlineJson.face_id || null, face_name: outlineJson.face_name || null });
+      } catch (e) {
+        finish(500, { ok: false, error: 'STEP 解析结果读取失败: ' + friendlyError(e) });
+      }
+    });
+    child.on('error', (err) => finish(500, { ok: false, error: 'Python 启动失败: ' + friendlyError(err) }));
+  } catch (e) {
+    res.status(400).json({ ok: false, error: friendlyError(e) });
+  }
+});
+
+// ---- 新建向导: 保存提取的轮廓文件 + 设置车型 outline_path ----
+router.post('/api/vehicles/save-outline', jsonParser, (req, res) => {
+  try {
+    const body = req.body || {};
+    const vehiclePath = path.resolve(body.vehiclePath || '');
+    const kind = body.kind || 'mirror'; // mirror | rear-window
+    const outlineFile = body.outlineFile;
+    if (!vehiclePath.startsWith(path.resolve(VEHICLES_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界' });
+    }
+    if (!outlineFile || !outlineFile.outline_count) {
+      return res.status(400).json({ ok: false, error: '缺少轮廓数据' });
+    }
+
+    // 保存轮廓文件到车型同目录
+    const base = path.basename(vehiclePath, '.json');
+    const outlinePath = path.join(path.dirname(vehiclePath), `${base}.${kind === 'rear-window' ? 'rear-window' : 'outline'}.json`);
+    fs.writeFileSync(outlinePath, JSON.stringify(outlineFile, null, 2), 'utf8');
+
+    // 更新车型 JSON 的 outline_path
+    const vehicle = JSON.parse(fs.readFileSync(vehiclePath, 'utf8'));
+    if (kind === 'rear-window') {
+      if (!vehicle.rear_window) vehicle.rear_window = {};
+      vehicle.rear_window.outline_path = path.basename(outlinePath);
+    } else {
+      if (!vehicle.mirror) vehicle.mirror = {};
+      vehicle.mirror.outline_path = path.basename(outlinePath);
+    }
+    fs.writeFileSync(vehiclePath, JSON.stringify(vehicle, null, 2), 'utf8');
+
+    res.json({ ok: true, outlinePath, vehicles: scanVehicles() });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: friendlyError(e) });
+  }
+});
+
 // 静态文件 + 首页 (放最后, 平台 server.js 挂载后即生效)
 router.use(express.static(path.join(__dirname, 'public')));
 router.get('/', (req, res) => {
