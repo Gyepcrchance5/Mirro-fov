@@ -111,12 +111,12 @@
     Object.entries(pages).forEach(([k, el]) => {
       if (el) el.style.display = k === name ? '' : 'none';
     });
-    if (name === 'inner' && !innerPage.__inited) {
-      innerPage.__inited = true;
+    if (name === 'inner' && !pages.inner.__inited) {
+      pages.inner.__inited = true;
       initInner();
     }
-    if (name === 'exterior' && !exteriorPage.__inited) {
-      exteriorPage.__inited = true;
+    if (name === 'exterior' && !pages.exterior.__inited) {
+      pages.exterior.__inited = true;
       initExterior();
     }
     if (name === 'wizard-inner' && !$('wizard-inner-page').__inited) {
@@ -771,7 +771,8 @@
       if (e.key === 'Enter' && e.target.tagName === 'INPUT') doVerify();
     });
     await loadVehicles();
-    await loadVehicleConfig();
+    // 加载选择框当前项 (默认第一项) — 保证下拉显示与加载数据一致 (服务端默认值 ≠ 列表首项)
+    await loadVehicleConfig($('vehicle-select').value);
     await doVerify();
   }
 
@@ -800,7 +801,7 @@
     $('ext-save-btn').addEventListener('click', () => alert('外镜车型保存待实现: 外镜数据含轮廓点数组, 需完整编辑表单。'));
     $('ext-save-as-btn').addEventListener('click', () => alert('外镜另存为待实现 (同上)。'));
     $('ext-delete-btn').addEventListener('click', () => alert('外镜车型删除待实现。'));
-    loadExtVehicles().then(() => loadExtConfig().then(() => doExtVerify()));
+    loadExtVehicles().then(() => loadExtConfig($('ext-vehicle-select').value).then(() => doExtVerify()));
   }
 
   // ====== 内后视镜新建向导 ======
@@ -828,8 +829,7 @@
     grid.innerHTML = '';
     for (const pt of WIZ_POINTS) {
       const col = document.createElement('div');
-      col.className = 'col';
-      col.style.minWidth = '130px';
+      col.className = 'col-6 col-md-6';
       const axes = ['X', 'Y', 'Z'];
       col.innerHTML = `
         <div class="card shadow-sm h-100">
@@ -843,46 +843,61 @@
   }
 
   // STEP 上传 + 解析 + 预览
+  // 直接以原始二进制上传 (非 base64 JSON): 无编码开销/不冻结主线程, 体积少 33%, 本地秒传
   async function parseStepFile(fileInput, resultDiv, type) {
     const file = fileInput.files[0];
-    if (!file) { resultDiv.textContent = '请先选择文件'; return; }
-    resultDiv.textContent = '解析中... (大文件可能需要 30 秒)';
-    const reader = new FileReader();
-    reader.onload = async (e) => {
+    if (!file) { resultDiv.className = 'wizard-result'; resultDiv.textContent = '请先选择文件'; return; }
+    const parseBtn = $('wiz-parse-' + (type === 'mirror' ? 'mirror' : 'rw'));
+    if (parseBtn) parseBtn.disabled = true;
+    resultDiv.className = 'wizard-result';
+    try {
+      resultDiv.textContent = `上传 ${(file.size / 1048576).toFixed(1)}MB, 解析轮廓中...`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 120000);
+      let resp;
       try {
-        const base64 = btoa(e.target.result);
-        const resp = await fetch(API_BASE + '/step/upload', {
+        resp = await fetch(API_BASE + '/step/upload', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: file.name, content: base64, type }),
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-Filename': encodeURIComponent(file.name),
+            'X-Type': type,
+          },
+          body: file,
+          signal: controller.signal,
         });
-        const data = await resp.json();
-        if (data.ok) {
-          resultDiv.innerHTML = `✅ 提取 ${data.outline_count} 点轮廓`;
-          if (type === 'mirror') {
-            wizardData.mirrorOutline = data.outline;
-            renderWizardPreview('wiz-mirror-plot', 'wiz-mirror-preview', 'wiz-mirror-preview-count', data.outline, '镜面轮廓');
-          } else {
-            wizardData.rwOutline = data.outline;
-            renderWizardPreview('wiz-rw-plot', 'wiz-rw-preview', 'wiz-rw-preview-count', data.outline, '后挡风轮廓');
-          }
+      } finally { clearTimeout(timer); }
+      const data = await resp.json();
+      if (data.ok) {
+        resultDiv.className = 'wizard-result ok';
+        resultDiv.textContent = `提取 ${data.outline_count} 点轮廓`;
+        if (type === 'mirror') {
+          wizardData.mirrorOutline = data.outline;
+          renderWizardPreview('wiz-mirror-plot', 'wiz-mirror-preview', data.outline, '镜面轮廓');
         } else {
-          resultDiv.innerHTML = `❌ ${data.error}`;
+          wizardData.rwOutline = data.outline;
+          renderWizardPreview('wiz-rw-plot', 'wiz-rw-preview', data.outline, '后挡风轮廓');
         }
-      } catch (err) { resultDiv.innerHTML = `❌ ${err.message}`; }
-    };
-    reader.readAsBinaryString(file);
+      } else {
+        resultDiv.className = 'wizard-result err';
+        resultDiv.textContent = `失败: ${data.error}`;
+      }
+    } catch (err) {
+      resultDiv.className = 'wizard-result err';
+      resultDiv.textContent = err.name === 'AbortError' ? '解析超时 (120 秒), 请重试或确认 STEP 文件类型' : `失败: ${err.message}`;
+    } finally {
+      if (parseBtn) parseBtn.disabled = false;
+    }
   }
 
   // 轮廓预览 (Plotly 2D, 后挡风用 Y-Z, 镜面用 u-v)
-  function renderWizardPreview(plotDiv, previewDiv, countDiv, outline, title) {
+  function renderWizardPreview(plotDiv, previewDiv, outline, title) {
     if (typeof Plotly === 'undefined' || !outline || outline.length < 3) return;
     const is2D = outline[0].length === 2;
     const xs = outline.map(p => is2D ? p[0] : p[1]);
     const ys = outline.map(p => is2D ? p[1] : p[2]);
     xs.push(xs[0]); ys.push(ys[0]);
     $(previewDiv).style.display = '';
-    $(countDiv).textContent = outline.length + ' 点';
     Plotly.newPlot(plotDiv, [{
       x: xs, y: ys, mode: 'lines+markers',
       line: { color: '#0071e3', width: 2 },
@@ -891,10 +906,10 @@
     }], {
       xaxis: { title: 'u (mm)', gridcolor: '#f0f0f2' },
       yaxis: { title: 'v (mm)', gridcolor: '#f0f0f2' },
-      margin: { l: 50, r: 10, t: 20, b: 40 },
+      margin: { l: 50, r: 10, t: 24, b: 40 },
       paper_bgcolor: '#fff', plot_bgcolor: '#fff',
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
-      title: { text: title, font: { size: 12, color: '#6e6e73' } },
+      title: { text: title + ' · ' + outline.length + ' 点', font: { size: 12, color: '#6e6e73' } },
     }, { responsive: true });
   }
 
@@ -1021,6 +1036,9 @@
     $('wiz-step3-prev').addEventListener('click', () => wizardPrev(3));
     $('wiz-parse-mirror').addEventListener('click', () => parseStepFile($('wiz-mirror-step'), $('wiz-mirror-result'), 'mirror'));
     $('wiz-parse-rw').addEventListener('click', () => parseStepFile($('wiz-rw-step'), $('wiz-rw-result'), 'rear-window'));
+    // 选完文件立即自动解析 (无需再点按钮); 按钮保留作"重新解析"
+    $('wiz-mirror-step').addEventListener('change', () => parseStepFile($('wiz-mirror-step'), $('wiz-mirror-result'), 'mirror'));
+    $('wiz-rw-step').addEventListener('change', () => parseStepFile($('wiz-rw-step'), $('wiz-rw-result'), 'rear-window'));
     $('wiz-catia-btn').addEventListener('click', doWizCatia);
     $('wiz-save-btn').addEventListener('click', saveNewVehicle);
   }
@@ -1124,7 +1142,7 @@
     const mk = (ok) => `<span style="color:${ok ? '#34c759' : '#ff3b30'}">${ok ? '✓' : '✗'}</span>`;
     const side = (s, r) => {
       const b = $('ext-badge-' + s);
-      b.textContent = (s === 'left' ? '左 ' : '右 ') + (r.mirrorPass ? '✅ PASS' : '❌ FAIL');
+      b.textContent = (s === 'left' ? '左 ' : '右 ') + (r.mirrorPass ? 'PASS' : 'FAIL');
       b.className = 'verdict-badge ' + (r.mirrorPass ? 'badge-pass' : 'badge-fail');
     };
     side('left', d.left); side('right', d.right);
@@ -1227,7 +1245,7 @@
     const Lm = viz.mirrors[0], Rm = viz.mirrors[1];
     renderExtMirrorView('ext-plot-left', Lm, Lm.mirrorPass);
     renderExtMirrorView('ext-plot-right', Rm, Rm.mirrorPass);
-    $('ext-panel-left').textContent = Lm.mirrorPass ? '✅ PASS' : '❌ FAIL';
-    $('ext-panel-right').textContent = Rm.mirrorPass ? '✅ PASS' : '❌ FAIL';
+    $('ext-panel-left').textContent = Lm.mirrorPass ? 'PASS' : 'FAIL';
+    $('ext-panel-right').textContent = Rm.mirrorPass ? 'PASS' : 'FAIL';
   }
 })();
