@@ -131,19 +131,6 @@ npm test
 
 > **STEP 方案**：3DE COM 不支持曲线采样（三轮探测确认），改为导出 STEP 文件后用纯 Python + numpy 解析。`step_topology.py` 可自动识别反射面边界，无需手动指定曲线 ID。
 
-## 🚢 平台部署
-
-本模块按[平台开发规范](https://mi.feishu.cn/docx/RIazdnzZjo7BexxywgGcqZ4anIh)开发，交付 `modules/smart/` 整个文件夹。
-
-管理员在 `server.js` 添加：
-
-```javascript
-const mirroFovRoutes = require('./modules/smart/mirro-fov/routes');
-app.use('/mirro-fov', moduleAuth('mirro-fov'), mirroFovRoutes);
-```
-
-平台环境下 3DE 不可用，前端自动降级（按钮灰掉 + 提示）。
-
 ## 📐 坐标系
 
 整车坐标系：**X+ = 后方，Y+ = 乘客右，Z+ = 上方**。单位米。所有内部计算在整车坐标系完成，无坐标转换。
