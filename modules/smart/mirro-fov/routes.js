@@ -692,9 +692,8 @@ router.post('/api/exterior/verify', jsonParser, (req, res) => {
   try {
     const body = req.body || {};
     const psi = Number.isFinite(body.psi) ? body.psi : 0;
-    const scale = Number.isFinite(body.scale) ? body.scale : 1.0;
-    const result = verifyExteriorBoth(body.path || '', { psi, scale });
-    res.json({ ok: true, scale, ...result });
+    const result = verifyExteriorBoth(body.path || '', { psi });
+    res.json({ ok: true, ...result });
   } catch (e) {
     res.status(400).json({ ok: false, error: friendlyError(e) });
   }

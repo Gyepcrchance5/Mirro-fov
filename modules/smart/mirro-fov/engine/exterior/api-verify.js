@@ -70,22 +70,9 @@ function raysFromEdge(eye, tri, n, mirror) {
   return out;
 }
 
-/** 在 UV 切平面均匀缩放 outline (保持帽心不变) — 诊断用 */
-function scaleOutlineUV(outline, mirrorBase, scale) {
-  if (Math.abs(scale - 1) < 1e-9) return outline;
-  return outline.map(p => {
-    const [u, v] = mirrorBase.localUV(p);
-    if (Math.abs(u) < 1e-6 && Math.abs(v) < 1e-6) return p;
-    const newU = u * scale, newV = v * scale;
-    const P = vec3Add(mirrorBase.capCenter, vec3Add(vec3Scale(mirrorBase.rightVec, newU / 1000), vec3Scale(mirrorBase.upVec, newV / 1000)));
-    const dir = vec3Normalize(vec3Sub(P, mirrorBase.sphereCenter));
-    return vec3Add(mirrorBase.sphereCenter, vec3Scale(dir, mirrorBase.radius));
-  });
-}
-
 /** 单镜校核 (内部) */
 function verifyOne(side, raw, opts = {}) {
-  const { psi = 0, samplePerEdge = 20, minMarginMm = 3.0, scale = 1.0 } = opts;
+  const { psi = 0, samplePerEdge = 20, minMarginMm = 3.0 } = opts;
   const mir = raw[`exterior_mirror_${side}`];
   const eyeCenter = raw.driver.eye_center;
   const eyes = { left: raw.driver.eye_left_raw, right: raw.driver.eye_right_raw };
@@ -97,10 +84,7 @@ function verifyOne(side, raw, opts = {}) {
   const fit = fitSphereFromOutline(mir.outline_raw, { srDesign: mir.sr_fit, eye: eyeCenter, supplierCenter: mir.supplier_sphere_center, coplanarTolMm: 1.0 });
   const gate = validateOutlineOnSphere(mir.outline_raw, fit.center, mir.sr_fit);
   const projOutline = projectToSphere(mir.outline_raw, fit.center, mir.sr_fit);
-  let mirrorBase = new ExteriorMirror({ radius: mir.sr_fit, sphereCenter: fit.center, outline: projOutline, turretAxisPoint: mir.turret_axis_p1, turretAxisDir: mir.rotation_axis_dir });
-  // UV 缩放 outline (诊断: 验证镜面大小是否足)
-  const scaledOutline = scale > 0 && Math.abs(scale - 1) > 1e-9 ? scaleOutlineUV(projOutline, mirrorBase, scale) : projOutline;
-  let mirror = scale > 0 && Math.abs(scale - 1) > 1e-9 ? new ExteriorMirror({ radius: mir.sr_fit, sphereCenter: fit.center, outline: scaledOutline, turretAxisPoint: mir.turret_axis_p1, turretAxisDir: mir.rotation_axis_dir }) : mirrorBase;
+  let mirror = new ExteriorMirror({ radius: mir.sr_fit, sphereCenter: fit.center, outline: projOutline, turretAxisPoint: mir.turret_axis_p1, turretAxisDir: mir.rotation_axis_dir });
   if (psi) mirror = mirror.rotated(psi);
 
   const v = verifyExterior(eyes, doorOuterY, ground, mirror, { samplePerEdge, minMarginMm, regulation });

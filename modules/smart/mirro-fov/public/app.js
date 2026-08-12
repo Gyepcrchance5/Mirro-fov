@@ -792,11 +792,11 @@
   async function doExtVerify() {
     const btn = $('ext-verify-btn');
     btn.disabled = true; btn.textContent = '校核中…'; $('ext-status').textContent = '';
-    const scale = parseFloat($('ext-scale').value);
+    const psi = parseFloat($('ext-psi').value) || 0;
     try {
       const r = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: extCurrentPath || '', psi: 0, scale }),
+        body: JSON.stringify({ path: extCurrentPath || '', psi }),
       });
       const d = await r.json();
       if (!d.ok) throw new Error(d.error);
@@ -810,11 +810,10 @@
   async function doExtAuto() {
     const btn = $('ext-auto-btn');
     btn.disabled = true; btn.textContent = '搜索中…'; $('ext-auto-status').textContent = '正在搜索…';
-    const scale = parseFloat($('ext-scale').value);
     try {
       const r0 = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: extCurrentPath || '', psi: 0, scale }),
+        body: JSON.stringify({ path: extCurrentPath || '', psi: 0 }),
       });
       const d0 = await r0.json();
       if (!d0.ok) throw new Error(d0.error);
@@ -824,10 +823,11 @@
         $('ext-auto-status').textContent = '±3° 内无两镜都过的角度';
         return;
       }
-      // 应用最佳 ψ, 重新校核渲染
+      // 应用最佳 ψ, 回填输入框, 重新校核渲染
+      $('ext-psi').value = cs.bestPsi;
       const r1 = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: extCurrentPath || '', psi: cs.bestPsi, scale }),
+        body: JSON.stringify({ path: extCurrentPath || '', psi: cs.bestPsi }),
       });
       const d1 = await r1.json();
       if (!d1.ok) throw new Error(d1.error);
@@ -845,10 +845,6 @@
       b.className = 'verdict-badge ' + (r.mirrorPass ? 'badge-pass' : 'badge-fail');
     };
     side('left', d.left); side('right', d.right);
-    // 缩放信息
-    if (d.scale && Math.abs(d.scale - 1) > 0.001) {
-      $('ext-verdict-detail').textContent = `×${d.scale.toFixed(2)} 缩放 · ` + (d.right.mirrorPass ? '右镜 PASS' : '右镜仍 FAIL');
-    }
     const allPass = d.left.mirrorPass && d.right.mirrorPass;
     $('ext-verdict-detail').textContent = allPass ? '两镜均通过' : (d.left.search.found || d.right.search.found ? '±3° 内有解' : '±3° 内无解');
     const e = (edges) => edges.map(x => `${x.name}:${mk(x.pass)}(${x.visible})`).join(' ');

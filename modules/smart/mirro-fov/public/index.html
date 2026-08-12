@@ -255,7 +255,20 @@
 
       <!-- 参数卡 (L|R 拆分, 等高) -->
       <div class="row g-2 mb-2 param-row" id="ext-param-row">
-        <!-- 镜片曲率 + 校核 + 自动搜角 -->
+        <!-- 调节角度 + 校核 + 自动搜角 (绕转向器轴线) -->
+        <div class="col" style="min-width:130px">
+          <div class="card shadow-sm h-100">
+            <div class="card-header py-1 px-2"><div class="card-title mb-0">调节角度</div><small class="text-muted">绕转向器轴线 · ±3°</small></div>
+            <div class="card-body py-2 px-2">
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">ψ </label><small class="unit">°</small><input id="ext-psi" type="number" step="0.5" min="-3" max="3" value="0" class="form-control form-control-sm" title="绕转向器轴线旋转角, ±3° 调节"></div>
+              <div class="text-muted mt-2 pt-1 border-top" style="font-size:11px;text-align:center">💡 可用自动搜角</div>
+              <button id="ext-verify-btn" class="btn btn-solid btn-sm mt-2 w-100" style="font-size:13px">校核</button>
+              <button id="ext-auto-btn" class="btn btn-outline-accent btn-sm mt-1 w-100" style="font-size:13px">自动搜角</button>
+              <div id="ext-auto-status" class="text-muted mt-1" style="font-size:11px"></div>
+            </div>
+          </div>
+        </div>
+        <!-- 镜片曲率 -->
         <div class="col" style="min-width:130px">
           <div class="card shadow-sm h-100">
             <div class="card-header py-1 px-2"><div class="card-title mb-0">镜片曲率</div><small class="text-muted">凸球面 单球面</small></div>
@@ -264,9 +277,6 @@
               <div class="mb-2"><label class="mb-0" style="font-size:13px">SR 设计 </label><small class="unit">m</small><input id="ext-sr-nominal" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">公差 </label><small class="unit">m</small><input id="ext-sr-tol" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="text-muted mt-2 pt-1 border-top" style="font-size:11px;text-align:center">💡 拟合用 SR 校核值</div>
-              <button id="ext-verify-btn" class="btn btn-solid btn-sm mt-2 w-100" style="font-size:13px">校核</button>
-              <button id="ext-auto-btn" class="btn btn-outline-accent btn-sm mt-1 w-100" style="font-size:13px">自动搜角</button>
-              <div id="ext-auto-status" class="text-muted mt-1" style="font-size:11px"></div>
             </div>
           </div>
         </div>
@@ -390,19 +400,7 @@
       <div class="panel-frame mb-2">
         <div class="panel-bar">
           <span class="panel-title">右外后视镜 反射面投影</span>
-          <div style="display:flex;align-items:center;gap:8px">
-            <span id="ext-panel-right" class="panel-count" style="margin-right:8px"></span>
-            <label style="font-size:11px;color:#6e6e73;margin:0">缩放 ×</label>
-            <select id="ext-scale" style="font-size:12px;border:1px solid #d2d2d7;border-radius:5px;padding:1px 4px">
-              <option value="1.00">1.00 (原镜)</option>
-              <option value="1.04">1.04</option>
-              <option value="1.08">1.08</option>
-              <option value="1.10">1.10</option>
-              <option value="1.12" selected>1.12 (PASS)</option>
-              <option value="1.15">1.15</option>
-              <option value="1.20">1.20</option>
-            </select>
-          </div>
+          <span id="ext-panel-right" class="panel-count"></span>
         </div>
         <div id="ext-plot-right" style="width:100%;height:520px"></div>
       </div>
@@ -412,7 +410,7 @@
 
   </div>
 
-  <script src="app.js?v=20260811d"></script>
+  <script src="app.js?v=20260812a"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>
