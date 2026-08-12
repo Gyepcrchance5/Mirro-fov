@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) if (os := __import__('os')) else '.')
 import step_curve_sampler as scs  # noqa: E402
+import step_verify  # noqa: E402
 import numpy as np  # noqa: E402
 
 try:
@@ -169,6 +170,83 @@ def _resolve_vertex(vid, entities, points):
     return None
 
 
+def sample_edge_vertex_chained(edge, entities, points, n=40):
+    """采样边, 用 VERTEX_POINT 作为确定端点, 只取顶点之间部分。
+
+    修复飞线: B 样条参数化采样不一定到达共享顶点, 导致相邻边间隙。
+    顶点是模型的真实边界点, 用顶点链式连接保证连续。
+    返回 (trav_start, interior_pts, trav_end) — 按 ORIENTED_EDGE 遍历方向
+    (orient=True: v_start→v_end; orient=False: v_end→v_start)。
+    (公共实现: 外镜球面镜/内镜/后挡风三条路径共用)
+    """
+    pts, _ = sample_edge_curve(edge, entities, points, n)
+    if pts is None or len(pts) < 2:
+        return None, None, None
+    arr = np.array(pts)
+    v_start = _resolve_vertex(edge.get('v_start'), entities, points)
+    v_end = _resolve_vertex(edge.get('v_end'), entities, points)
+    if v_start is None or v_end is None:
+        return None, None, None
+    # 采样中找最接近 v_start / v_end 的点
+    ds = np.linalg.norm(arr - v_start, axis=1)
+    de = np.linalg.norm(arr - v_end, axis=1)
+    is_ = int(np.argmin(ds))
+    ie = int(np.argmin(de))
+    lo, hi = min(is_, ie), max(is_, ie)
+    interior = arr[lo:hi + 1]
+    # 方向: 按 ORIENTED_EDGE 遍历方向 (pts 已由 sample_edge_curve 按 orient 处理,
+    # 这里再保证 interior[0] 是遍历起点侧: orient=True→v_start, False→v_end)
+    orient = bool(edge.get('orient', True))
+    trav_start = v_start if orient else v_end
+    trav_end = v_end if orient else v_start
+    if np.linalg.norm(interior[0] - trav_start) > np.linalg.norm(interior[-1] - trav_start):
+        interior = interior[::-1]
+    return trav_start, interior, trav_end
+
+
+def edge_adaptive_sample_n(edge, entities, points, base_n=25, spacing_mm=3.0):
+    """按边长自适应采样密度: 保证点距 ≈ spacing_mm。
+    固定按条数采样会让长边稀疏/短边过密, 破坏闸门的中位间距阈值。"""
+    _, length = sample_edge_curve(edge, entities, points, 8)  # 只取曲线长度
+    if length and length > 0:
+        return max(base_n, int(length / spacing_mm) + 1)
+    return base_n
+
+
+def strip_doubled_paths(pts, tol_mm=2.0):
+    """删除退化环的重复描边段 (CAD 导出常见: 路径出去又沿原路折回, 或整段描两遍)。
+
+    空间网格哈希记录已保留点; 当前点与已保留的非相邻点重合 (距离 < tol)
+    → 视为重复描边, 连续重复段整体删除; 重复段沿原路径折回, 段尾自然衔接。
+    所有点 (含末点) 都参与判定; 闭合由调用方负责 (调用方按首尾距补闭合点)。
+    """
+    arr = np.asarray(pts, dtype=float)
+    n = len(arr)
+    if n < 8:
+        return arr
+    cell = max(tol_mm, 0.5)
+    grid = {}  # (ix, iy, iz) -> [kept 索引]
+
+    def is_dup(ki):
+        kx, ky, kz = (int(arr[ki][k] // cell) for k in range(3))
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for j in grid.get((kx + dx, ky + dy, kz + dz), ()):
+                        if ki - j > 3 and np.linalg.norm(arr[ki] - arr[j]) < tol_mm:
+                            return True
+        return False
+
+    kept = [0]
+    grid.setdefault(tuple(int(arr[0][k] // cell) for k in range(3)), []).append(0)
+    for i in range(1, n):
+        if is_dup(i):
+            continue  # 重复描边点 → 删除
+        kept.append(i)
+        grid.setdefault(tuple(int(arr[i][k] // cell) for k in range(3)), []).append(i)
+    return arr[kept]
+
+
 def _parse_line(edge, entities, points):
     """LINE: 两端点 (从 EDGE_CURVE 的 VERTEX_POINT 解引用到 CARTESIAN_POINT)"""
     vs, ve = edge.get('v_start'), edge.get('v_end')
@@ -230,11 +308,20 @@ def main():
     print(f"\n=== 3. 选最长边做半边轮廓 (面 #{fid}) ===")
     edge_samples = []
     for edge in edges:
-        pts, length = sample_edge_curve(edge, entities, points, n)
-        if pts is None or len(pts) < 2:
+        # 顶点锚定采样: 共享顶点是边界真值 (B-spline 采样不落顶点会引入飞线/断点)
+        chained = sample_edge_vertex_chained(edge, entities, points, n)
+        if chained is None or chained[1] is None or len(chained[1]) < 2:
+            pts, length = sample_edge_curve(edge, entities, points, n)  # 降级: 无顶点可用
+            if pts is None or len(pts) < 2:
+                continue
+            edge_samples.append((edge, pts, length or 0))
+            print(f"  #{edge['edge_curve']} len={length or 0:.1f}mm {len(pts)}点 (无顶点锚定)")
             continue
-        edge_samples.append((edge, pts, length or 0))
-        print(f"  #{edge['edge_curve']} len={length or 0:.1f}mm {len(pts)}点")
+        v_start, interior, v_end = chained
+        pts = np.vstack([v_start, interior, v_end])
+        length = float(np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1)))  # 弧长近似
+        edge_samples.append((edge, pts, length))
+        print(f"  #{edge['edge_curve']} len={length:.1f}mm {len(pts)}点 (顶点锚定)")
     if not edge_samples:
         print("  ❌ 无可采样边")
         return
@@ -245,9 +332,8 @@ def main():
 
     # ─── 4. 半边轮廓 → 镜像成全宽 ───────────────────────
     half = [[float(p[0]), float(p[1]), float(p[2])] for p in main_pts]
-    # 闭合
-    if np.linalg.norm(np.array(half[0]) - np.array(half[-1])) > 0.5:
-        half.append(half[0])
+    # 不补飞线闭合: 开边 (U形) 的起终点在镜面中心线两端 (底中心/顶中心), 镜像后自然对接;
+    # 若边本身是闭合环 (起终点重合) 则直接使用
     arr = np.array(half)
     y_span = np.ptp(arr[:, 1])
     print(f"\n=== 4. 半边轮廓 ===")
@@ -256,13 +342,14 @@ def main():
     needs_mirror = y_span < 180  # 半边<180, 全宽≈225
     if needs_mirror:
         print(f"\n=== 5. 镜像 Y→-Y 成全宽 ===")
-        # 半边 (Y≤0 或 Y≥0) + 镜像反向拼接, 去 Y≈0 重复点
+        # 半边 (Y≤0) + 镜像反向拼接, 在中心线 (Y≈0) 对接; 不去点 (中心对接点必须保留)
+        mirrored = [[p[0], -p[1], p[2]] for p in reversed(half)]
         full = list(half)
-        mirrored = reversed([[p[0], -p[1], p[2]] for p in half])
-        for p in mirrored:
-            if abs(p[1]) < 0.5:
-                continue
-            full.append(p)
+        # 对接处若重合 (顶中心), 去掉镜像首点避免重复
+        if mirrored and np.linalg.norm(np.array(full[-1]) - np.array(mirrored[0])) < 0.5:
+            mirrored = mirrored[1:]
+        full.extend(mirrored)
+        # 闭合: 底中心短段 (左右半边的起点间, 实际底边在此连续)
         if np.linalg.norm(np.array(full[0]) - np.array(full[-1])) > 0.5:
             full.append(full[0])
         total_outline = full
@@ -275,7 +362,17 @@ def main():
     z_ok = abs(np.ptp(arr[:, 2]) - 50.8) < 3
     print(f"  吻合 modena: Y {'✅' if y_ok else '❌'} Z {'✅' if z_ok else '❌'}")
 
-    # ─── 6. 输出 JSON ───────────────────────────────────
+    # ─── 6. 自检闸门: 连续闭合/无飞线/跨度合理, 不过则失败 ──
+    try:
+        step_verify.assert_outline_ok(total_outline, f"镜面 #{fid} {name!r}")
+        print(f"\n=== 6. 自检闸门 ===")
+        print(f"  连续闭合 ✓ 无断点 ✓ 跨度合理 ✓")
+    except ValueError as e:
+        print(f"\n=== 6. 自检闸门 ===")
+        print(f"  ❌ {e}")
+        sys.exit(1)
+
+    # ─── 7. 输出 JSON ───────────────────────────────────
     # local: lx=Y-center_y (镜面宽方向), ly=Z-center_z (镜面高方向)
     center_y = float((arr[:, 1].min() + arr[:, 1].max()) / 2)
     center_z = float((arr[:, 2].min() + arr[:, 2].max()) / 2)

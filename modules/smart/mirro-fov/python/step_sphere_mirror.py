@@ -62,32 +62,8 @@ def find_sphere_faces(sphere_id, entities):
     return faces
 
 
-def _sample_edge_vertex_chained(edge, entities, points, n=40):
-    """采样边, 用 VERTEX_POINT 作为确定端点, 只取顶点之间部分。
-
-    修复飞线: B 样条参数化采样不一定到达共享顶点, 导致相邻边间隙。
-    顶点是模型的真实边界点 (严格在球面上), 用顶点链式连接保证连续。
-    返回 (v_start, interior_pts, v_end)。
-    """
-    pts, length = st.sample_edge_curve(edge, entities, points, n)
-    if pts is None or len(pts) < 2:
-        return None, None, None
-    arr = np.array(pts)
-    v_start = st._resolve_vertex(edge.get('v_start'), entities, points)
-    v_end = st._resolve_vertex(edge.get('v_end'), entities, points)
-    if v_start is None or v_end is None:
-        return None, None, None
-    # 采样中找最接近 v_start / v_end 的点
-    ds = np.linalg.norm(arr - v_start, axis=1)
-    de = np.linalg.norm(arr - v_end, axis=1)
-    is_ = np.argmin(ds)
-    ie = np.argmin(de)
-    lo, hi = min(is_, ie), max(is_, ie)
-    interior = arr[lo:hi + 1]
-    # 方向: interior[0] 接近 v_start
-    if np.linalg.norm(interior[0] - v_start) > np.linalg.norm(interior[-1] - v_start):
-        interior = interior[::-1]
-    return v_start, interior, v_end
+# 顶点锚定采样 (公共实现移至 step_topology, 三条路径共用)
+_sample_edge_vertex_chained = st.sample_edge_vertex_chained
 
 
 def extract_mirror_outline(face_id, entities, points, sphere_center, radius, n=40):

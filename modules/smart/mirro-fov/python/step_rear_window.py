@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import step_curve_sampler as scs
 import step_topology as st
+import step_verify
 import numpy as np
 
 try:
@@ -76,7 +77,11 @@ def find_all_faces(entities):
 
 
 def sample_face_boundary_stitched(face_eid, bounds_refs, entities, points, n=20):
-    """提取面的完整边界: 所有边按 LOOP 顺序采样后缝合为一个闭合轮廓"""
+    """提取面的完整边界: 所有边按 LOOP 顺序采样后缝合为一个闭合轮廓。
+
+    顶点锚定采样 (公共实现): B-spline 参数化采样不一定到达共享顶点,
+    用 VERTEX_POINT 作为确定端点可消除相邻边的缝合飞线。
+    """
     edges = st.trace_face_boundary(face_eid, bounds_refs, entities)
     if not edges:
         return None, []
@@ -84,26 +89,138 @@ def sample_face_boundary_stitched(face_eid, bounds_refs, entities, points, n=20)
     all_pts = []
     edge_info = []
     for edge in edges:
-        pts, length = st.sample_edge_curve(edge, entities, points, n)
-        if pts is None or len(pts) < 2:
-            edge_info.append({'id': edge['edge_curve'], 'type': edge['geom_type'],
-                              'length': 0, 'pts': 0, 'status': 'skip'})
-            continue
+        # 按边长自适应采样密度 (点距 ~3mm 均匀), 保证闸门阈值可靠
+        n_edge = st.edge_adaptive_sample_n(edge, entities, points, n, 3.0)
+        chained = st.sample_edge_vertex_chained(edge, entities, points, n_edge)
+        if chained is None or chained[1] is None or len(chained[1]) < 2:
+            pts, length = st.sample_edge_curve(edge, entities, points, n_edge)  # 降级: 无顶点可用
+            if pts is None or len(pts) < 2:
+                edge_info.append({'id': edge['edge_curve'], 'type': edge['geom_type'],
+                                  'length': 0, 'pts': 0, 'status': 'skip'})
+                continue
+            contribution = [[float(p[0]), float(p[1]), float(p[2])] for p in pts]
+            length = length or 0
+            status = 'ok'
+        else:
+            v_start, interior, v_end = chained
+            stack = np.vstack([v_start, interior, v_end])
+            contribution = [[float(p[0]), float(p[1]), float(p[2])] for p in stack]
+            length = float(np.sum(np.linalg.norm(np.diff(stack, axis=0), axis=1)))  # 弧长近似
+            status = 'ok-chained'
         # 去首点 (与上一条边尾点重合, 避免重复)
         if all_pts:
             last = np.array(all_pts[-1])
-            first = np.array(pts[0])
+            first = np.array(contribution[0])
             if np.linalg.norm(last - first) < 1.0:
-                pts = pts[1:]
-        all_pts.extend([[float(p[0]), float(p[1]), float(p[2])] for p in pts])
+                contribution = contribution[1:]
+        all_pts.extend(contribution)
         edge_info.append({'id': edge['edge_curve'], 'type': edge['geom_type'],
-                          'length': round(length or 0, 1), 'pts': len(pts), 'status': 'ok'})
+                          'length': round(length, 1), 'pts': len(contribution), 'status': status})
+
+    # 删除退化环的重复描边段 (路径出去又沿原路折回) — 不删则轮廓自重叠/断点
+    if all_pts:
+        all_pts = st.strip_doubled_paths(np.array(all_pts), tol_mm=2.0).tolist()
 
     # 闭合
     if all_pts and np.linalg.norm(np.array(all_pts[0]) - np.array(all_pts[-1])) > 1.0:
         all_pts.append(all_pts[0])
 
     return all_pts, edge_info
+
+
+def mirror_half_outline(pts, tol_mm=2.0):
+    """半模镜像: 剔除 Y≈0 中心线接缝段 (保留接缝端点), 镜像 Y→-Y 拼接成完整轮廓。
+
+    半模闭环 = [底中心 → 左/右弧 → 顶中心 → (Y≈0 接缝回到底中心)]。
+    接缝端点 (顶/底中心, 精确 Y≈0) 作为拼接点, 不依赖弧末点的采样密度。
+    """
+    arr = np.asarray(pts, dtype=float)
+    n = len(arr)
+    # 1. 找 Y≈0 的连续接缝段 (最长的 |Y|<tol 连续块)
+    on_seam = [abs(arr[i, 1]) < tol_mm for i in range(n)]
+    best_run, best_start = 0, -1
+    i = 0
+    while i < n:
+        if on_seam[i]:
+            j = i
+            while j < n and on_seam[j]:
+                j += 1
+            if j - i > best_run:
+                best_run, best_start = j - i, i
+            i = j
+        else:
+            i += 1
+    if best_run < 3 or best_start < 0:
+        return arr  # 无接缝, 原样返回
+
+    # 2. 接缝端点 (精确 Y≈0): 顶中心 (接缝起点) / 底中心 (接缝终点)
+    seam_end = best_start + best_run
+    s_start = arr[best_start]       # 顶中心
+    s_end = arr[seam_end - 1]       # 底中心
+
+    # 3. 开弧含端点: [底中心 → 弧 → 顶中心]
+    arc = np.concatenate([[s_end], arr[seam_end:], arr[:best_start], [s_start]])
+
+    # 4. 镜像反向弧 (Y→-Y): [顶中心 → 右侧弧 → 底中心]
+    mirrored = arc[::-1].copy()
+    mirrored[:, 1] = -mirrored[:, 1]
+
+    # 5. 拼接: arc + mirrored; 首尾都在 Y≈0 (顶中心), 去重后自然闭合
+    full = list(arc)
+    if np.linalg.norm(np.array(full[-1]) - mirrored[0]) < 2.0 * tol_mm:
+        mirrored = mirrored[1:]
+    full.extend(mirrored.tolist())
+    if np.linalg.norm(np.array(full[0]) - np.array(full[-1])) > 1.0:
+        full.append(full[0].tolist())
+    return np.array(full)
+
+
+def geometry_fallback_faces(entities, points):
+    """关键词匹配失败时按几何特征找后挡风面 (两级筛选):
+    1) 粗筛: 原始采样跨度合理 (<2000mm) + Y/Z 跨度在窗口量级
+    2) 精筛: 对面积最大的候选做 锚定缝合 + 自检闸门, 取通过中最大者。
+    返回与 find_rear_window_faces 同构的 4 元组 (eid, name, bounds, tokens)。"""
+    coarse = []
+    for fid, name, bounds in find_all_faces(entities):
+        edges = st.trace_face_boundary(fid, bounds, entities)
+        if not edges:
+            continue
+        sample_pts = []
+        for edge in edges[:8]:
+            # 粗筛也必须用顶点锚定采样 — 原始曲线采样会被超出顶点的曲线延伸污染 (跨度虚高)
+            chained = st.sample_edge_vertex_chained(edge, entities, points, 6)
+            if chained is not None and chained[1] is not None and len(chained[1]) >= 2:
+                ts, interior, te = chained
+                sample_pts.extend(np.vstack([ts, interior, te]).tolist())
+            else:
+                pts, _ = st.sample_edge_curve(edge, entities, points, 6)
+                if pts is not None:
+                    sample_pts.extend(pts.tolist())
+        if len(sample_pts) < 3:
+            continue
+        arr = np.array(sample_pts)
+        sp = [float(np.ptp(arr[:, k])) for k in range(3)]
+        if any(s > 2000 for s in sp):
+            continue  # 跨度异常 (采样污染/装配上下文)
+        if not (300 <= sp[1] <= 2000 and 100 <= sp[2] <= 1000):
+            continue
+        coarse.append((sp[1] * sp[2], fid, name, bounds))
+    coarse.sort(key=lambda x: -x[0])
+
+    passed = []
+    for _, fid, name, bounds in coarse[:20]:  # 只精筛面积最大的前 20 个
+        pts, _ = sample_face_boundary_stitched(fid, bounds, entities, points, 25)
+        if not pts or len(pts) < 5:
+            continue
+        arr = np.array(pts)
+        sp = [float(np.ptp(arr[:, k])) for k in range(3)]
+        try:
+            step_verify.assert_outline_ok(pts, f'#{fid}')
+            passed.append((sp[1] * sp[2], fid, name, bounds))
+        except ValueError:
+            pass  # 缝合不连续的面直接淘汰
+    passed.sort(key=lambda x: -x[0])
+    return [(fid, name, bounds, None) for _, fid, name, bounds in passed[:3]]
 
 
 def check_coordinate_system(pts):
@@ -169,8 +286,13 @@ def main():
 
     if not faces and args.face_id is None:
         print("  ❌ 未找到后挡风面 (名字不含后挡风/rear window/backlight)")
-        print("  💡 用 --list 查看所有面, 再用 --face-id #ID 手动指定")
-        return
+        print("  💡 尝试按几何特征在所有面中降级查找...")
+        faces = geometry_fallback_faces(entities, points)
+        if not faces:
+            print("  ❌ 几何降级也未找到合理后挡风面 (Y跨500~1600, Z跨150~800, 跨度<2000)")
+            print("  💡 用 --list 查看所有面, 再用 --face-id #ID 手动指定")
+            return
+        print(f"  ✅ 几何降级: 找到 {len(faces)} 个候选面")
 
     # ─── 2. 选目标面 ────────────────────────────────────
     if args.face_id:
@@ -192,31 +314,26 @@ def main():
             return
         print(f"  手动指定: #{target[0]} {target[1]!r}")
     else:
-        # 自动: 找尺寸最像后挡风的面 (Y跨>500, Z跨>200)
+        # 自动: 按 锚定缝合后的真实跨度 评分 (原始粗采样跨度被曲线延伸污染, 不可信)
         print(f"\n=== 2. 从 {len(faces)} 个候选面选后挡风 ===")
         best = None
         best_score = -1
         for fid, name, bounds, _ in faces:
-            edges = st.trace_face_boundary(fid, bounds, entities)
-            if not edges:
+            pts, _ = sample_face_boundary_stitched(fid, bounds, entities, points, 25)
+            if not pts or len(pts) < 5:
                 continue
-            sample_pts = []
-            for edge in edges:
-                pts, _ = st.sample_edge_curve(edge, entities, points, 5)
-                if pts is not None:
-                    sample_pts.extend([[float(p[0]), float(p[1]), float(p[2])] for p in pts])
-            if len(sample_pts) < 3:
-                continue
-            arr = np.array(sample_pts)
-            y_span = np.ptp(arr[:, 1])
-            z_span = np.ptp(arr[:, 2])
-            score = y_span * z_span  # 面积近似
+            arr = np.array(pts)
+            y_span = float(np.ptp(arr[:, 1]))
+            z_span = float(np.ptp(arr[:, 2]))
+            # 半模面 Y 跨只有一半 (如 571 vs 全 1143), 用 2×Y 估全宽
+            eff_y = y_span * 2 if (arr[:, 1].min() > -5 or arr[:, 1].max() < 5) else y_span
+            score = eff_y * z_span
             print(f"  #{fid} {name!r}: Y跨{y_span:.0f} Z跨{z_span:.0f} (score={score:.0f})")
-            if y_span > 500 and z_span > 200 and score > best_score:
+            if y_span > 300 and z_span > 100 and score > best_score:
                 best_score = score
                 best = (fid, name, bounds)
         if best is None:
-            print("  ❌ 没有面符合后挡风尺寸 (Y跨>500, Z跨>200)")
+            print("  ❌ 没有面符合后挡风尺寸")
             print("  💡 用 --list 查看所有面, 再用 --face-id #ID 手动指定")
             return
         target = best
@@ -236,6 +353,26 @@ def main():
         print(f"    #{ei['id']} {ei['type']} len={ei['length']}mm {ei['pts']}点 {ei['status']}")
     print(f"  轮廓总点数: {len(outline)}")
 
+    # ─── 3.5 半模检测: 轮廓 Y 全在中心线一侧 (含 0) → 半模, 镜像成完整轮廓 ──
+    # (后挡风与镜面一样可能存在半边建模; 完整轮廓 Y 应跨两侧)
+    # 需同时满足: 单侧 + 一侧跨度 >150mm (排除小碎面) + 轮廓上有 Y≈0 接缝段
+    arr0 = np.array(outline)
+    y_min0, y_max0 = float(arr0[:, 1].min()), float(arr0[:, 1].max())
+    one_side = y_min0 > -5 or y_max0 < 5
+    has_seam = float(np.min(np.abs(arr0[:, 1]))) < 2.0
+    if one_side and has_seam and (y_max0 - y_min0) > 150:
+        print(f"\n=== 3.5 半模检测 ===\n  Y[{y_min0:.0f},{y_max0:.0f}] 单侧半模 (含 Y≈0 接缝) → 镜像 Y→-Y 成完整轮廓")
+        outline = mirror_half_outline(np.array(outline)).tolist()
+        print(f"  镜像后 {len(outline)} 点")
+
+    # ─── 3.6 自检闸门: 连续闭合/无飞线/跨度合理, 不过则失败 ──
+    try:
+        step_verify.assert_outline_ok(outline, f"后挡风 #{fid} {name!r}")
+        print(f"\n=== 3.5 自检闸门 ===\n  连续闭合 ✓ 无断点 ✓ 跨度合理 ✓")
+    except ValueError as e:
+        print(f"\n=== 3.5 自检闸门 ===\n  ❌ {e}")
+        sys.exit(1)
+
     # ─── 4. 坐标系校验 ──────────────────────────────────
     print(f"\n=== 4. 坐标系校验 ===")
     coord = check_coordinate_system(outline)
@@ -250,7 +387,7 @@ def main():
         "step_file": args.step_file,
         "face_id": fid,
         "face_name": name,
-        "outline": outline,
+        "outline_mm": outline,
         "outline_count": len(outline),
         "edges": edge_info,
         "coordinate_system": "vehicle" if coord['vehicle_coord'] else "unknown",

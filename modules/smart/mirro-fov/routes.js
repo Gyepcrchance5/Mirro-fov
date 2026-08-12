@@ -741,17 +741,19 @@ router.post('/api/catia/exterior', jsonParser, (req, res) => {
 // ---- 新建向导: STEP 上传 + 解析轮廓 (base64 → 临时文件 → spawn Python) ----
 const STEP_TMP_DIR = path.join(__dirname, 'data', 'tmp');
 const STEP_UPLOAD_LIMIT = '100mb';
-router.post('/api/step/upload', express.json({ limit: STEP_UPLOAD_LIMIT }), (req, res) => {
-  const body = req.body || {};
-  const filename = (body.filename || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const content = body.content; // base64
-  const type = body.type || 'mirror'; // mirror | rear-window
-  if (!content) return res.status(400).json({ ok: false, error: '缺少文件内容' });
+// type: () => true — 不挑 Content-Type 一律按原始字节接收。浏览器传 File 作 body 时
+// 可能用自己的 MIME 类型覆盖显式设置的 Content-Type, 精确匹配会导致解析失败 (缺少文件内容)
+router.post('/api/step/upload', express.raw({ limit: STEP_UPLOAD_LIMIT, type: () => true }), (req, res) => {
+  // 原始二进制上传 (前端直接发 File body): 无 base64/JSON 开销, 文件名/类型走请求头
+  const filename = decodeURIComponent(req.get('x-filename') || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const type = req.get('x-type') || 'mirror'; // mirror | rear-window
+  const buf = req.body; // Buffer
+  if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ ok: false, error: '缺少文件内容' });
 
   try {
     fs.mkdirSync(STEP_TMP_DIR, { recursive: true });
     const stepPath = path.join(STEP_TMP_DIR, filename);
-    fs.writeFileSync(stepPath, Buffer.from(content, 'base64'));
+    fs.writeFileSync(stepPath, buf);
 
     // 按类型 spawn 对应 Python 提取脚本
     const script = type === 'rear-window' ? 'step_rear_window.py' : 'step_topology.py';
@@ -767,22 +769,31 @@ router.post('/api/step/upload', express.json({ limit: STEP_UPLOAD_LIMIT }), (req
 
     const child = spawn('python', args, { cwd: PY_PROJECT, shell: process.platform === 'win32' });
     let done = false;
+    // 收集 stderr 尾部: 自检闸门/脚本错误的详情会打印到 stderr, 失败时带给前端
+    let stderrTail = '';
+    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-800); });
     const finish = (status, payload) => { if (!done) { done = true; res.status(status).json(payload); } };
     const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: 'STEP 解析超时 (60 秒)' }); }, 60000);
 
     child.on('exit', (code) => {
       clearTimeout(timeout);
       if (code !== 0 || !fs.existsSync(expectedOut)) {
-        finish(500, { ok: false, error: `STEP 解析失败 (exit ${code})。可能面名不匹配, 需手动指定面 ID。` });
+        const detail = stderrTail.trim().split('\n').filter(l => l.includes('❌') || l.includes('自检') || l.includes('Error') || l.includes('Traceback')).slice(-3).join(' | ');
+        const hint = code !== 0
+          ? 'Python 脚本执行失败'
+          : '未提取到目标轮廓 (面名不匹配或模型不含目标面)';
+        const suffix = detail ? `。详情: ${detail}` : '';
+        finish(500, { ok: false, error: `${hint} (exit ${code})。${type === 'mirror' ? '内镜向导需要包含"镜面/内镜片"面的内后视镜 STEP 文件, 外镜整车模型不适用于此向导。' : '请确认文件为后挡风模型 STEP。'}${suffix}` });
         return;
       }
       try {
         const outlineJson = JSON.parse(fs.readFileSync(expectedOut, 'utf8'));
-        // 提取轮廓点: step_topology 输出 outline_local_mm (2D), step_rear_window 输出 outline_mm (3D)
+        // 提取轮廓点: step_topology 输出 outline_local_mm (2D), step_rear_window 输出 outline_mm (3D, mm)
+        // 均以 mm 原样返回前端 (预览/存储一致); 引擎使用时在 load 处 mm→m
         let outline = null;
         let count = 0;
         if (type === 'rear-window' && outlineJson.outline_mm) {
-          outline = outlineJson.outline_mm.map(p => [p[0] / 1000, p[1] / 1000, p[2] / 1000]);
+          outline = outlineJson.outline_mm;
           count = outline.length;
         } else if (outlineJson.outline_local_mm) {
           outline = outlineJson.outline_local_mm;
