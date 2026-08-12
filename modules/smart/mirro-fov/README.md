@@ -13,7 +13,7 @@
 | Node.js | ≥ 18 | 服务器 + 校核引擎 | ✅ 必装 |
 | npm 包 | `express` `js-yaml` | 见 package.json，`npm install` 安装 | ✅ 必装 |
 | Python | ≥ 3.8 | STEP 轮廓提取（新建向导/一条龙） | ✅ 必装 |
-| numpy | 任意 | STEP 提取采样/拟合（`pip install numpy`） | ✅ 必装 |
+| numpy / pyyaml / pywin32 | 任意 | STEP 提取 + 3DE（`pip install -r python/requirements.txt`） | ✅ 必装 |
 | CATIA + pywin32 | — | 3DE 选点读取（/api/catia） | 可选，无则按钮降级灰掉 |
 
 **异地部署注意**：真实车型数据（`data/vehicles/*.json`、`data/exterior/*.json`）为敏感数据**不入库**，需手动拷贝。仓库自带 `template.example.json` 示例车型，可完整跑通校核流程演示。STEP 文件（`data/tmp/`）为上传临时文件，不入库。
@@ -21,6 +21,12 @@
 ---
 
 ## 功能说明
+
+### 工作流
+
+- **动作优先**：入口分"校核已有车型"（绿=已有数据）与"新建车型"（蓝=从零创建）
+- **新建车型向导**（内镜）：基本信息 → STEP 轮廓提取 → 后挡风轮廓（可选）→ 点坐标（3DE 或手输）→ 参数保存并校核
+- **STEP 提取公共层**：顶点锚定采样 + 自检闸门（连续闭合/无飞线/跨度合理）+ 半模镜像，内镜/外镜/后挡风统一
 
 ### 内后视镜（I 类平面镜）
 
@@ -82,6 +88,8 @@ app.use('/mirro-fov', moduleAuth('mirro-fov'), mirroFovRoutes);
 | /api/auto-search | POST | 两阶段自动搜角 |
 | /api/vehicles/save | POST | 保存车型 |
 | /api/vehicles/delete | POST | 删除车型 |
+| /api/vehicles/save-outline | POST | 保存 STEP 提取的轮廓文件 |
+| /api/step/upload | POST | STEP 上传提取（原始二进制，需 Python + numpy） |
 | /api/catia | POST | 3DE 读取（需本机 Python + CATIA） |
 | /api/catia/available | GET | 3DE 可用性检测 |
 
@@ -134,7 +142,7 @@ mirro-fov/
 ```bash
 cd modules/smart/mirro-fov
 npm install
-pip install numpy    # STEP 提取必需
+pip install -r python/requirements.txt   # numpy 等 (STEP 提取必需)
 npm test             # 155 断言全绿
 python python/test_step_extraction.py   # STEP 提取回归 (6 项)
 npm start            # → http://localhost:3000
