@@ -20,3 +20,4 @@ modules/smart/mirro-fov/docs/DEVELOPMENT_SPEC.md
 modules/smart/mirro-fov/docs/exterior-mirror-inputs.md
 # 平台落地页 (含内部组织名/部署说明)
 modules/smart/public/index.html
+data/tmp/
