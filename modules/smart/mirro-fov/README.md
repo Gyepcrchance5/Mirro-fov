@@ -6,6 +6,20 @@
 - 所属分组：smart（智能硬件组）
 - 一句话描述：GB 15084-2022 内外后视镜法规视野校核工具，支持 I 类内镜（平面镜五线法）和 III 类外镜（凸球面双眼交集）
 
+## 环境要求
+
+| 依赖 | 版本 | 用途 | 必装 |
+|------|------|------|------|
+| Node.js | ≥ 18 | 服务器 + 校核引擎 | ✅ 必装 |
+| npm 包 | `express` `js-yaml` | 见 package.json，`npm install` 安装 | ✅ 必装 |
+| Python | ≥ 3.8 | STEP 轮廓提取（新建向导/一条龙） | ✅ 必装 |
+| numpy | 任意 | STEP 提取采样/拟合（`pip install numpy`） | ✅ 必装 |
+| CATIA + pywin32 | — | 3DE 选点读取（/api/catia） | 可选，无则按钮降级灰掉 |
+
+**异地部署注意**：真实车型数据（`data/vehicles/*.json`、`data/exterior/*.json`）为敏感数据**不入库**，需手动拷贝。仓库自带 `template.example.json` 示例车型，可完整跑通校核流程演示。STEP 文件（`data/tmp/`）为上传临时文件，不入库。
+
+---
+
 ## 功能说明
 
 ### 内后视镜（I 类平面镜）
@@ -94,13 +108,21 @@ mirro-fov/
     shared/                 几何/平面/多边形（公用）
     inner/                  内镜（平面镜 + 五线法）
     exterior/               外镜（凸球面 + 球心拟合 + 三角视野）
+  python/                  ← STEP 提取（需 Python + numpy）
+    step_curve_sampler.py   STEP 解析器（B-spline 采样）
+    step_topology.py        内镜拓扑提取 + 顶点锚定采样/重复描边清理（公共）
+    step_rear_window.py     后挡风提取（半模镜像/面名几何降级）
+    step_sphere_mirror.py   外镜球面镜提取
+    step_verify.py          提取自检闸门（公共: 连续闭合/无飞线/跨度）
+    test_step_extraction.py 提取回归测试
   public/                  ← 前端
     index.html              landing + 内镜页 + 外镜页
     style.css               L0 设计系统模板
     app.js                  交互逻辑
-  data/                    ← 车型数据
+  data/                    ← 车型数据（真实数据敏感不入库）
     vehicles/               内镜车型 JSON
     exterior/               外镜车型 JSON
+    tmp/                    上传的 STEP 临时文件（gitignore）
   docs/                    ← 规范文档
     DEVELOPMENT_SPEC.md     开发维护规范
 ```
@@ -112,7 +134,9 @@ mirro-fov/
 ```bash
 cd modules/smart/mirro-fov
 npm install
+pip install numpy    # STEP 提取必需
 npm test             # 155 断言全绿
+python python/test_step_extraction.py   # STEP 提取回归 (6 项)
 npm start            # → http://localhost:3000
 ```
 
