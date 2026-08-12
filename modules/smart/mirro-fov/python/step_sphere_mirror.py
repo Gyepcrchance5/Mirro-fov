@@ -62,58 +62,64 @@ def find_sphere_faces(sphere_id, entities):
     return faces
 
 
-def extract_mirror_outline(face_id, entities, points, sphere_center, radius, n=30):
+def _sample_edge_vertex_chained(edge, entities, points, n=40):
+    """采样边, 用 VERTEX_POINT 作为确定端点, 只取顶点之间部分。
+
+    修复飞线: B 样条参数化采样不一定到达共享顶点, 导致相邻边间隙。
+    顶点是模型的真实边界点 (严格在球面上), 用顶点链式连接保证连续。
+    返回 (v_start, interior_pts, v_end)。
+    """
+    pts, length = st.sample_edge_curve(edge, entities, points, n)
+    if pts is None or len(pts) < 2:
+        return None, None, None
+    arr = np.array(pts)
+    v_start = st._resolve_vertex(edge.get('v_start'), entities, points)
+    v_end = st._resolve_vertex(edge.get('v_end'), entities, points)
+    if v_start is None or v_end is None:
+        return None, None, None
+    # 采样中找最接近 v_start / v_end 的点
+    ds = np.linalg.norm(arr - v_start, axis=1)
+    de = np.linalg.norm(arr - v_end, axis=1)
+    is_ = np.argmin(ds)
+    ie = np.argmin(de)
+    lo, hi = min(is_, ie), max(is_, ie)
+    interior = arr[lo:hi + 1]
+    # 方向: interior[0] 接近 v_start
+    if np.linalg.norm(interior[0] - v_start) > np.linalg.norm(interior[-1] - v_start):
+        interior = interior[::-1]
+    return v_start, interior, v_end
+
+
+def extract_mirror_outline(face_id, entities, points, sphere_center, radius, n=40):
     """从面提取镜面帽轮廓: 追踪边界, 筛选有效边 (全在球面上), 缝合"""
     _, fargs = entities[face_id]
     ftoks = scs._split_top_level(fargs)
     bounds = scs._parse_ref_list(ftoks[1])
     edges = st.trace_face_boundary(face_id, bounds, entities)
 
-    valid_edges = []
-    for e in edges:
-        pts, length = st.sample_edge_curve(e, entities, points, n)
-        if pts is None or len(pts) < 2:
-            continue
-        arr = np.array(pts)
-        # 有效边: 所有点距球心≈R (在球面上), 且长度合理 (<500mm)
-        dists = np.linalg.norm(arr - np.array(sphere_center), axis=1)
-        on_sphere = np.all(np.abs(dists - radius) < 5)
-        seg_lens = np.linalg.norm(np.diff(arr, axis=0), axis=1)
-        real_len = seg_lens.sum() if len(seg_lens) else 0
-        if on_sphere and real_len < 500 and real_len > 1:
-            valid_edges.append((e, pts, real_len))
-        # 记录被筛掉的边 (调试)
-        else:
-            print(f"  [skip] edge #{e['edge_curve']}: on_sphere={on_sphere} len={real_len:.0f}mm")
-
-    if not valid_edges:
-        return None, []
-
-    # 链式缝合: 从第一条边开始, 每条边找下一条 (按端点到最近)
-    # 先按 EDGE_LOOP 顺序尝试, 不匹配则最近邻
-    pts_list = [np.array(p) for _, p, _ in valid_edges]
-    lens = [l for _, _, l in valid_edges]
-
-    # 简单缝合: 直接按原始顺序, 去重复点 (EDGE_LOOP 顺序通常正确)
+    # 顶点链式: 每条边用 VERTEX_POINT 定端点, 顶点严格在球面上 (模型真实边界)
     outline = []
-    prev = None
-    for pts in pts_list:
-        pts = list(pts)
-        if prev is not None:
-            # 对齐方向: 首点应接近 prev 末点
-            if np.linalg.norm(pts[-1] - prev) < np.linalg.norm(pts[0] - prev):
-                pts = pts[::-1]
-            # 去首点重复
-            if np.linalg.norm(pts[0] - prev) < 2:
-                pts = pts[1:]
-        outline.extend([[float(p[0]), float(p[1]), float(p[2])] for p in pts])
-        prev = np.array(outline[-1])
+    for e in edges:
+        v_start, interior, v_end = _sample_edge_vertex_chained(e, entities, points, n)
+        if v_start is None or v_end is None or len(interior) < 2:
+            continue
+        # 起点顶点
+        if outline:
+            if np.linalg.norm(v_start - np.array(outline[-1])) > 5:
+                outline.append([float(v_start[0]), float(v_start[1]), float(v_start[2])])
+        else:
+            outline.append([float(v_start[0]), float(v_start[1]), float(v_start[2])])
+        # 内部点
+        for p in interior[1:-1]:
+            outline.append([float(p[0]), float(p[1]), float(p[2])])
+        # 终点顶点
+        outline.append([float(v_end[0]), float(v_end[1]), float(v_end[2])])
 
     # 闭合
-    if outline and np.linalg.norm(np.array(outline[0]) - np.array(outline[-1])) > 5:
+    if outline and np.linalg.norm(np.array(outline[0]) - np.array(outline[-1])) > 8:
         outline.append(outline[0])
 
-    return outline, valid_edges
+    return outline, []
 
 
 def main():

@@ -93,7 +93,8 @@ function verifyOne(side, raw, opts = {}) {
   const ground = Ground.fromTwoPoints(raw.ground.front_mid, raw.ground.rear_mid);
   const regulation = raw.regulation;
 
-  const fit = fitSphereFromOutline(mir.outline_raw, { srDesign: mir.sr_fit, eye: eyeCenter, supplierCenter: mir.supplier_sphere_center });
+  // coplanarTolMm=1.0: 球面帽浅曲 (残差 0.3~0.5mm) 时走 planar-cut (用已知 SR 约束), 避免 general 拟合在浅帽上不稳定
+  const fit = fitSphereFromOutline(mir.outline_raw, { srDesign: mir.sr_fit, eye: eyeCenter, supplierCenter: mir.supplier_sphere_center, coplanarTolMm: 1.0 });
   const gate = validateOutlineOnSphere(mir.outline_raw, fit.center, mir.sr_fit);
   const projOutline = projectToSphere(mir.outline_raw, fit.center, mir.sr_fit);
   let mirrorBase = new ExteriorMirror({ radius: mir.sr_fit, sphereCenter: fit.center, outline: projOutline, turretAxisPoint: mir.turret_axis_p1, turretAxisDir: mir.rotation_axis_dir });
