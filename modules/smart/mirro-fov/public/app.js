@@ -762,11 +762,11 @@
     }
   }
 
-  // ====== 初始化 ======
-  async function initInner() {
+  // ====== 共享 DOM 初始化 (内镜页: 后挡风卡行 + 按钮事件绑定) ======
+  // 提取为共享函数, initInner 和 saveNewVehicle 两处调用 (消除 30 行复制)
+  function initInnerDOM() {
     buildRWCard('rw-row', 'rw-c', '后挡风 CAS 角', 7, RW_LABELS);
     buildRWCard('tz-row', 'rw-t', '后挡风 透光角', 4, ['透光角1', '透光角2', '透光角3', '透光角4']);
-    // 标记后挡风卡被编辑
     for (let i = 0; i < 7; i++) {
       ['x', 'y', 'z'].forEach(ax => {
         $('rw-c' + i + '-' + ax).addEventListener('input', () => { rwDirty = true; });
@@ -778,17 +778,20 @@
     $('save-as-btn').addEventListener('click', doSaveAs);
     $('delete-btn').addEventListener('click', doDelete);
     $('catia-btn').addEventListener('click', doCatia);
-    // 3DE 可用性检测 (平台服务器无 Python/CATIA, 按钮灰掉)
     checkCatiaAvailability().then(ok => { if (!ok) { $('catia-btn').disabled = true; $('catia-btn').title = '平台环境不支持 3DE 读取, 请本地使用'; $('catia-btn').textContent = '3DE不可用'; } });
     $('vehicle-select').addEventListener('change', async (e) => {
       await loadVehicleConfig(e.target.value);
       await doVerify();
     });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && e.target.tagName === 'INPUT') doVerify();
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT' && pages.inner.style.display !== 'none') doVerify();
     });
+  }
+
+  // ====== 内镜页初始化 (首次进入时调用) ======
+  async function initInner() {
+    initInnerDOM();
     await loadVehicles();
-    // 加载选择框当前项 (默认第一项) — 保证下拉显示与加载数据一致 (服务端默认值 ≠ 列表首项)
     await loadVehicleConfig($('vehicle-select').value);
     await doVerify();
   }
@@ -982,21 +985,31 @@
   // 保存新车型 → 切校核页
   async function saveNewVehicle() {
     const name = ($('wiz-name').value || '新车型').trim();
-    const gfZ = parseFloat($('wiz-gf-z').value) || 0;
-    // 后挡风: 有 STEP 轮廓则省略 (save-outline 单独写), 无则用简化 4 点
-    const defaultRw = [[4.54, -0.57, 1.49], [4.71, -0.51, 1.45], [4.71, 0.51, 1.45], [4.54, 0.57, 1.49]];
+    // parseFloat 空值兜底: 空串/NaN→0, 避免 JSON.stringify 转 null 污染数据 (P0)
+    const pf = (id, def) => { const v = parseFloat($('wiz-' + id).value); return isNaN(v) ? def : v; };
+    const pf3 = (id, def) => [$('wiz-' + id + '-x'), $('wiz-' + id + '-y'), $('wiz-' + id + '-z')].map(el => { const v = parseFloat(el.value); return isNaN(v) ? 0 : v; });
+    const gfZ = pf('gf-z', 0);
+    // 镜面尺寸: 有 STEP 轮廓时读取真实跨度的 floor 值, 否则默认
+    const w = wizardData.mirrorOutline && wizardData.mirrorOutline.length >= 3
+      ? Math.floor(Math.max(...wizardData.mirrorOutline.map(p => p[0])) - Math.min(...wizardData.mirrorOutline.map(p => p[0]))) || 224.796 : 224.796;
+    const h = wizardData.mirrorOutline && wizardData.mirrorOutline.length >= 3
+      ? Math.floor(Math.max(...wizardData.mirrorOutline.map(p => p[1])) - Math.min(...wizardData.mirrorOutline.map(p => p[1]))) || 50.794 : 50.794;
+    // 后挡风: 无 STEP 时用 7 点占位 (与系统预期 7 行对齐, 不 pad 重复点)
+    const defaultRw = wizardData.rwOutline && wizardData.rwOutline.length >= 3 ? [[...wizardData.rwOutline[0]]] : [
+      [4.54, -0.57, 1.49], [4.71, -0.51, 1.45], [4.71, 0.51, 1.45], [4.54, 0.57, 1.49],
+      [4.54, 0.57, 1.49], [4.54, -0.57, 1.49], [4.54, -0.57, 1.49]];
     const payload = {
       name,
-      widthMM: 224.796, heightMM: 50.794,
-      cornerRadiusMM: parseFloat($('wiz-corner').value || 10),
-      yawDeg: parseFloat($('wiz-yaw').value || -23.5),
-      pitchDeg: parseFloat($('wiz-pitch').value || 5.0),
-      pvMM: [parseFloat($('wiz-pvt-x').value), parseFloat($('wiz-pvt-y').value), parseFloat($('wiz-pvt-z').value)],
-      czMM: [parseFloat($('wiz-cz-x').value), parseFloat($('wiz-cz-y').value), parseFloat($('wiz-cz-z').value)],
-      eyeMM: [parseFloat($('wiz-eye-x').value), parseFloat($('wiz-eye-y').value), parseFloat($('wiz-eye-z').value)],
-      ipdMM: parseFloat($('wiz-ipd').value || 65),
-      gfMM: [parseFloat($('wiz-gf-x').value), parseFloat($('wiz-gf-y').value), gfZ],
-      grMM: [parseFloat($('wiz-gr-x').value), parseFloat($('wiz-gr-y').value), parseFloat($('wiz-gr-z').value)],
+      widthMM: w, heightMM: h,
+      cornerRadiusMM: pf('corner', 10),
+      yawDeg: pf('yaw', -23.5),
+      pitchDeg: pf('pitch', 5.0),
+      pvMM: pf3('pvt'),
+      czMM: pf3('cz'),
+      eyeMM: pf3('eye'),
+      ipdMM: pf('ipd', 65),
+      gfMM: [pf('gf-x', 0), pf('gf-y', 0), gfZ],
+      grMM: [pf('gr-x', 0), pf('gr-y', 0), pf('gr-z', 0)],
       groundZ: gfZ / 1000,
       rwMM: defaultRw,
       rwTMM: [],
@@ -1021,27 +1034,7 @@
       //    (initInner 的 doVerify 晚到达 → 覆盖新车型渲染)
       if (!pages.inner.__inited) {
         pages.inner.__inited = true;
-        buildRWCard('rw-row', 'rw-c', '后挡风 CAS 角', 7, RW_LABELS);
-        buildRWCard('tz-row', 'rw-t', '后挡风 透光角', 4, ['透光角1', '透光角2', '透光角3', '透光角4']);
-        for (let i = 0; i < 7; i++) {
-          ['x', 'y', 'z'].forEach(ax => {
-            $('rw-c' + i + '-' + ax).addEventListener('input', () => { rwDirty = true; });
-          });
-        }
-        elVerifyBtn.addEventListener('click', doVerify);
-        elAutoBtn.addEventListener('click', doAutoSearch);
-        $('save-btn').addEventListener('click', doSave);
-        $('save-as-btn').addEventListener('click', doSaveAs);
-        $('delete-btn').addEventListener('click', doDelete);
-        $('catia-btn').addEventListener('click', doCatia);
-        checkCatiaAvailability().then(ok => { if (!ok) { $('catia-btn').disabled = true; $('catia-btn').title = '平台环境不支持 3DE 读取, 请本地使用'; $('catia-btn').textContent = '3DE不可用'; } });
-        $('vehicle-select').addEventListener('change', async (e) => {
-          await loadVehicleConfig(e.target.value);
-          await doVerify();
-        });
-        document.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter' && e.target.tagName === 'INPUT') doVerify();
-        });
+        initInnerDOM();
         await loadVehicles();
       }
       showPage('inner');
