@@ -24,6 +24,7 @@ const { verifyExteriorBoth, loadExteriorVehicle, scanExteriorVehicles } = requir
 
 // ─── 车型目录 ───
 const VEHICLES_DIR = path.join(__dirname, 'data', 'vehicles');
+const EXTERIOR_DIR = path.join(__dirname, 'data', 'exterior');
 const DEFAULT_VEHICLE = path.join(VEHICLES_DIR, 'modena.json');
 // Python 3DE 读取脚本根目录 (内嵌在项目内, 自包含)。
 // 环境变量 MIRRO_FOV_PY_DIR 可覆盖 (指向外部 Python 项目, 如完整 Mirro-fov)。
@@ -46,8 +47,13 @@ const round3 = x => Math.round(x * 1000) / 1000;
 // 错误信息友好化: 业务错误(throw new Error)保留原文; 运行时内部错误转通用提示, 防泄漏堆栈/内部字段
 function friendlyError(e) {
   if (!e) return '服务器内部错误';
+  // ENOENT: 文件不存在 (车型/轮廓/脚本), 业务可读提示, 仅暴露文件名不暴露完整路径
+  if (e.code === 'ENOENT') {
+    console.error('[routes] 文件不存在:', e.path || e);
+    return '文件不存在: ' + (e.path ? path.basename(e.path) : '未知');
+  }
   const isInternal = e instanceof TypeError || e instanceof ReferenceError ||
-                     e instanceof SyntaxError || e instanceof RangeError || e.code === 'ENOENT';
+                     e instanceof SyntaxError || e instanceof RangeError;
   if (isInternal) {
     console.error('[routes] 内部错误:', e);
     return '服务器内部错误, 请检查请求参数或车型数据文件';
@@ -513,8 +519,9 @@ router.post('/api/auto-search', jsonParser, (req, res) => {
     const eyeCenter = body.eyeCenter ?? cfg.driver.eyeCenter;
     const ipd = body.ipd ?? cfg.driver.ipd;
     const gz = body.groundZ ?? cfg.visualization.groundZ;
-    const farDist = cfg.regulation.farDistance;
-    const reqWidth = cfg.regulation.requiredWidth;
+    // 法规参数: 优先用前端传入 (当前车型), 否则回退默认车型 (modena)
+    const farDist = body.farDist ?? cfg.regulation.farDistance;
+    const reqWidth = body.reqWidth ?? cfg.regulation.requiredWidth;
     const eyePoints = { center: eyeCenter, ipd };
     // ground: 前端传两点定线 > 车型配置两点定线 > 水平地面
     const gd = (body.ground || cfg.ground)
@@ -604,7 +611,18 @@ router.post('/api/catia', jsonParser, (req, res) => {
   // execFile 无 stdin 会让 input() 立即抛 EOFError, 故用 spawn 并把本进程 stdio 透传:
   // 用户在运行 node 服务的终端里完成选点/输入, 3DE 弹框照常弹出。
   const body = req.body || {};
-  const yamlPath = body.output || path.join(VEHICLES_DIR, 'catia_read.yaml');
+  // 输出路径: 用户可控时必须落在 vehicles 目录内 (防 shell 注入: shell:true 下
+  // body.output 含 '&'/'|' 会被 cmd.exe 解释为命令分隔 → 任意命令执行)
+  let yamlPath;
+  if (body.output) {
+    const r = path.resolve(body.output);
+    if (!r.startsWith(path.resolve(VEHICLES_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能写到 vehicles 目录' });
+    }
+    yamlPath = r;
+  } else {
+    yamlPath = path.join(VEHICLES_DIR, 'catia_read.yaml');
+  }
   // 关键: spawn 前删除陈旧 yaml, 防止连接失败(exit 0 不生成新文件)时读到旧数据 → 假成功
   try { fs.unlinkSync(yamlPath); } catch (e) { /* 文件不存在, 忽略 */ }
   const child = spawn('python', ['-m', 'mirror_fov.catia_extract', '--output', yamlPath],
@@ -670,7 +688,12 @@ router.get('/api/exterior/vehicles', (req, res) => {
 // ---- 外后视镜: 读取车型参数 (扁平, 供前端填表) ----
 router.get('/api/exterior/config', (req, res) => {
   try {
-    const p = req.query.path || '';
+    const q = req.query.path || '';
+    // 路径越界校验 (只允许读 exterior 目录内, 防任意 JSON 文件读)
+    const p = q ? path.resolve(String(q)) : '';
+    if (p && !p.startsWith(path.resolve(EXTERIOR_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能读取 exterior 目录' });
+    }
     const raw = loadExteriorVehicle(p || undefined);
     const sum = (m) => ({
       sr_fit: m.sr_fit, sr_nominal: m.sr_nominal, sr_tolerance: m.sr_tolerance, radius: m.radius,
@@ -692,6 +715,13 @@ router.post('/api/exterior/verify', jsonParser, (req, res) => {
   try {
     const body = req.body || {};
     const psi = Number.isFinite(body.psi) ? body.psi : 0;
+    // 路径越界校验 (同 /api/exterior/config)
+    if (body.path) {
+      const r = path.resolve(String(body.path));
+      if (!r.startsWith(path.resolve(EXTERIOR_DIR))) {
+        return res.status(400).json({ ok: false, error: '路径越界, 只能读取 exterior 目录' });
+      }
+    }
     const result = verifyExteriorBoth(body.path || '', { psi });
     res.json({ ok: true, ...result });
   } catch (e) {
@@ -708,7 +738,17 @@ router.get('/api/catia/available', (req, res) => {
 // ---- 外后视镜: 3DE 读取 (spawn Python catia_extract --mode exterior) ----
 router.post('/api/catia/exterior', jsonParser, (req, res) => {
   const body = req.body || {};
-  const outPath = body.output || path.join(EXTERIOR_DIR, 'exterior-3de-read.json');
+  // 输出路径: 用户可控时必须落在 exterior 目录内 (防 shell 注入, 同 /api/catia)
+  let outPath;
+  if (body.output) {
+    const r = path.resolve(body.output);
+    if (!r.startsWith(path.resolve(EXTERIOR_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能写到 exterior 目录' });
+    }
+    outPath = r;
+  } else {
+    outPath = path.join(EXTERIOR_DIR, 'exterior-3de-read.json');
+  }
   try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
   const child = spawn('python', ['-m', 'mirror_fov.catia_extract', '--mode', 'exterior', '--output', outPath],
     { cwd: PY_PROJECT, stdio: 'inherit', shell: process.platform === 'win32' });
@@ -764,9 +804,12 @@ router.post('/api/step/upload', express.raw({ limit: STEP_UPLOAD_LIMIT, type: ()
     // 按类型 spawn 对应 Python 提取脚本
     const script = type === 'rear-window' ? 'step_rear_window.py' : 'step_topology.py';
     // step_topology.py 输出 <step>.mirror-outline.json (不支持 --output); step_rear_window.py 支持 --output
+    // step_topology.py 用 Path.with_suffix('.mirror-outline.json') 替换最后一个后缀,
+    // 即 .stp 与 .step 都会被替换; JS 侧正则须同步覆盖两种扩展名, 否则 .step 文件
+    // 的 expectedOut 多带一层后缀 → existsSync 假阴性 → 静默"未提取到目标轮廓"
     const expectedOut = type === 'rear-window'
       ? path.join(STEP_TMP_DIR, filename + '.outline.json')
-      : path.join(STEP_TMP_DIR, filename.replace(/\.stp$/i, '') + '.mirror-outline.json');
+      : path.join(STEP_TMP_DIR, filename.replace(/\.(stp|step)$/i, '') + '.mirror-outline.json');
     try { fs.unlinkSync(expectedOut); } catch (e) { /* 忽略 */ }
 
     const args = [path.join(__dirname, 'python', script), stepPath];

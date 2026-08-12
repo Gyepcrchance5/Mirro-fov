@@ -39,6 +39,8 @@
 
   const API_BASE = window.location.pathname.replace(/\/+$/, '') + '/api';
   let currentPath = null;
+  let curFarDist = 60.0;   // 当前车型法规远距 (auto-search 用, 默认 GB 15084 60m)
+  let curReqWidth = 20.0;  // 当前车型法规远距宽度 (默认 20m)
   let rwDirty = false; // 后挡风 CAS 卡是否被用户编辑过
   let currentOutlineLocal = null; // 真实反射区轮廓 [[lx,ly] mm] (STEP 采样, 从车型加载)
   let currentRwOutline = null;   // 后挡风完整轮廓 [[x,y,z] m] (STEP 采样, 从车型加载)
@@ -550,6 +552,7 @@
         eyeCenter: paramsM.eyeCenter, ipd: paramsM.ipd,
         groundZ: paramsM.groundZ, cornerRadius: paramsM.cornerRadius,
         ground: paramsM.ground, rearWindow: paramsM.rearWindow,
+        farDist: curFarDist, reqWidth: curReqWidth,
         yawRange: [-45, 15], pitchRange: [-10, 10], step: 2, seedYaw: -30, seedHalf: 12,
       });
       if (data.found) {
@@ -610,6 +613,9 @@
     rwDirty = false;
     currentOutlineLocal = cfg.outlineLocal || null;
     currentRwOutline = cfg.rwOutlineFull || null;
+    // 记录法规参数, 供 auto-search 带上 (不同车型可能非 60/20)
+    curFarDist = Number.isFinite(cfg.farDist) ? cfg.farDist : 60.0;
+    curReqWidth = Number.isFinite(cfg.reqWidth) ? cfg.reqWidth : 20.0;
     elLastAngles.textContent = `已加载车型: ${cfg.name}`;
     // 参数卡只读逻辑: 有 STEP 轮廓时, 镜面尺寸/后挡风 CAS 卡只读
     updateReadonlyState(cfg);
@@ -1035,8 +1041,10 @@
       if (!pages.inner.__inited) {
         pages.inner.__inited = true;
         initInnerDOM();
-        await loadVehicles();
       }
+      // 始终刷新下拉并选中新车型 (此前已 inited 时下拉是旧列表, 新车型不在其中)
+      await loadVehicles();
+      $('vehicle-select').value = d.path;
       showPage('inner');
       await loadVehicleConfig(d.path);
       await doVerify();
@@ -1207,8 +1215,11 @@
       return `<div style="font-size:12px;line-height:1.8"><b>${label}</b>: ${near} · ${far} · ${adj}</div>`;
     };
     $('ext-verdict-edges').innerHTML = zoneLine('左', d.left) + zoneLine('右', d.right);
-    // 数据质量: 拟合球心 vs 供应商
-    const fitLine = (label, r) => `<div class="mono" style="font-size:11px;color:#9a9aa0;line-height:1.6"><b>${label}</b> 球心[${r.fit.center.map(x => x.toFixed(3)).join(',')}] 残差${r.fit.residualMm.toExponential(0)}mm 交叉✓(${r.fit.crossCheck ? r.fit.crossCheck.devMm.toFixed(1) : '-'}mm)</div>`;
+    // 数据质量: 拟合球心 vs 供应商 (各字段可能为 null, 防御 toFixed/toExponential 崩溃)
+    const fmtC = (v) => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? x.toFixed(3) : '-').join(',') : '-';
+    const fmtE = (v) => Number.isFinite(v) ? v.toExponential(0) : '-';
+    const fmtD = (cc) => (cc && Number.isFinite(cc.devMm)) ? cc.devMm.toFixed(1) : '-';
+    const fitLine = (label, r) => `<div class="mono" style="font-size:11px;color:#9a9aa0;line-height:1.6"><b>${label}</b> 球心[${fmtC(r.fit && r.fit.center)}] 残差${fmtE(r.fit && r.fit.residualMm)}mm 交叉✓(${fmtD(r.fit && r.fit.crossCheck)}mm)</div>`;
     $('ext-verdict-fit').innerHTML = fitLine('左', d.left) + fitLine('右', d.right);
   }
 
