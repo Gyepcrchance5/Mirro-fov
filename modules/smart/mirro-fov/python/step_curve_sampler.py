@@ -29,18 +29,26 @@ except Exception:
 # ─── STEP 文本解析 ──────────────────────────────────────────
 
 # 逐行匹配 (STEP 实体一行一条); 贪婪 .* 到行尾 ); (支持 $ 空值标记)
+# 单行实体 (完整定义在一行, 以 ); 结尾)
 ENTITY_RE = re.compile(r'#(\d+)\s*=\s*([A-Z_0-9]+)\s*\((.*)\)\s*;\s*$')
+# 多行实体起始行 (只匹配开头, 不要求 ); 结尾)
+ENTITY_START_RE = re.compile(r'#(\d+)\s*=\s*([A-Z_0-9]+)\s*\(')
 
 
 def parse_step(path):
     """解析 STEP 文件, 返回 (entities, points)。
     entities: {id: (type, raw_args_str)}
     points: {id: np.array([x,y,z])}  CARTESIAN_POINT
+
+    支持多行实体 (B 样条曲线等跨行定义)。单个实体的行缓存到 `);` 结束。
     """
     entities = {}
     points = {}
     with open(path, encoding="utf-8", errors="replace") as f:
         in_data = False
+        pending = ""          # 多行实体的累计内容
+        pending_eid = None
+        pending_etype = None
         for line in f:
             if "DATA;" in line:
                 in_data = True
@@ -49,12 +57,39 @@ def parse_step(path):
                 break
             if not in_data:
                 continue
-            m = ENTITY_RE.match(line.strip())
+            line = line.strip()
+            if pending_eid is not None:
+                # 延续上一个多行实体
+                if ");" in line:
+                    pending += line[:line.index(");")]  # 去掉末尾 `);`
+                    entities[pending_eid] = (pending_etype, pending)
+                    if pending_etype == "CARTESIAN_POINT":
+                        pts = _parse_point_args(pending)
+                        if pts is not None:
+                            points[pending_eid] = pts
+                    pending_eid = None
+                    pending_etype = None
+                    pending = ""
+                else:
+                    pending += line
+                continue
+            m = ENTITY_RE.match(line)
             if not m:
+                m_start = ENTITY_START_RE.match(line)
+                if not m_start:
+                    continue
+                # 多行实体起始行: 只匹配开头, 缓存内容等 `);`
+                eid = int(m_start.group(1))
+                etype = m_start.group(2)
+                args = line[m_start.end():]  # 开头 `(` 之后的全部内容
+                pending_eid = eid
+                pending_etype = etype
+                pending = args
                 continue
             eid = int(m.group(1))
             etype = m.group(2)
             args = m.group(3)
+            # 单行实体 (完整在一行)
             entities[eid] = (etype, args)
             if etype == "CARTESIAN_POINT":
                 pts = _parse_point_args(args)
