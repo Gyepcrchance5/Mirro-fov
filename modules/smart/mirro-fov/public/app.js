@@ -854,6 +854,15 @@
       resultDiv.textContent = `上传 ${(file.size / 1048576).toFixed(1)}MB, 解析轮廓中...`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 120000);
+      // 轮询提取进度 (文件名键与服务端 sanitize 一致)
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch(API_BASE + '/step/progress?name=' + encodeURIComponent(safeName));
+          const d = await r.json();
+          if (d.progress) resultDiv.textContent = d.progress;
+        } catch (e) { /* 轮询失败忽略, 主请求结果为准 */ }
+      }, 500);
       let resp;
       try {
         resp = await fetch(API_BASE + '/step/upload', {
@@ -866,7 +875,7 @@
           body: file,
           signal: controller.signal,
         });
-      } finally { clearTimeout(timer); }
+      } finally { clearTimeout(timer); clearInterval(poll); }
       const data = await resp.json();
       if (data.ok) {
         resultDiv.className = 'wizard-result ok';
@@ -990,10 +999,14 @@
         await saveWizardOutlines(name, d.path);
       }
 
-      // 3. 切校核页并加载新车型
-      await loadVehicles();
-      await loadVehicleConfig(d.path);
+      // 3. 切校核页: 必须先初始化内镜页 (initInner 创建后挡风行等 DOM),
+      //    再加载新车型 — 否则 loadVehicleConfig 对 null 元素赋值崩溃
+      if (!pages.inner.__inited) {
+        pages.inner.__inited = true;
+        await initInner();
+      }
       showPage('inner');
+      await loadVehicleConfig(d.path);
       await doVerify();
     } catch (e) {
       alert('保存失败: ' + e.message);

@@ -741,6 +741,12 @@ router.post('/api/catia/exterior', jsonParser, (req, res) => {
 // ---- 新建向导: STEP 上传 + 解析轮廓 (base64 → 临时文件 → spawn Python) ----
 const STEP_TMP_DIR = path.join(__dirname, 'data', 'tmp');
 const STEP_UPLOAD_LIMIT = '100mb';
+// 提取进度 (按文件名轮询): Python 打印 STEP_PROGRESS|xxx → 收集 → 前端轮询显示
+const stepProgress = new Map();
+router.get('/api/step/progress', (req, res) => {
+  const name = String(req.query.name || '');
+  res.json({ ok: true, progress: stepProgress.get(name) || null });
+});
 // type: () => true — 不挑 Content-Type 一律按原始字节接收。浏览器传 File 作 body 时
 // 可能用自己的 MIME 类型覆盖显式设置的 Content-Type, 精确匹配会导致解析失败 (缺少文件内容)
 router.post('/api/step/upload', express.raw({ limit: STEP_UPLOAD_LIMIT, type: () => true }), (req, res) => {
@@ -772,7 +778,21 @@ router.post('/api/step/upload', express.raw({ limit: STEP_UPLOAD_LIMIT, type: ()
     // 收集 stderr 尾部: 自检闸门/脚本错误的详情会打印到 stderr, 失败时带给前端
     let stderrTail = '';
     child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-800); });
-    const finish = (status, payload) => { if (!done) { done = true; res.status(status).json(payload); } };
+    // 收集 stdout 的 STEP_PROGRESS|xxx 进度行, 供 /api/step/progress 轮询
+    // 注意: pipe 的 data chunk 任意大小, 行可能跨 chunk — 必须缓冲到完整行再匹配;
+    // 不能用 /^STEP_PROGRESS\|(.+)$/ — JS 正则 . 不匹配行终止符, Windows \r\n 行尾会失配
+    let stdoutBuf = '';
+    child.stdout.on('data', (d) => {
+      stdoutBuf += d.toString();
+      const lines = stdoutBuf.split('\n');
+      stdoutBuf = lines.pop();  // 保留未完成的行, 等下一个 chunk
+      for (const line of lines) {
+        if (line.startsWith('STEP_PROGRESS|')) {
+          stepProgress.set(filename, line.slice('STEP_PROGRESS|'.length).trim());
+        }
+      }
+    });
+    const finish = (status, payload) => { if (!done) { done = true; stepProgress.delete(filename); res.status(status).json(payload); } };
     const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: 'STEP 解析超时 (60 秒)' }); }, 60000);
 
     child.on('exit', (code) => {

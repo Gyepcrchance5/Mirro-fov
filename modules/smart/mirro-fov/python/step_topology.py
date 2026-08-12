@@ -27,7 +27,8 @@ import step_verify  # noqa: E402
 import numpy as np  # noqa: E402
 
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # line_buffering: stdout 接管道时默认块缓冲, 进度行必须按行即时刷出
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
 
@@ -263,8 +264,10 @@ def main():
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 80
 
     print(f"解析 STEP: {step_file}")
+    print("STEP_PROGRESS|解析 STEP 文件中...")
     entities, points = scs.parse_step(step_file)
     print(f"实体: {len(entities)}, 点: {len(points)}")
+    print(f"STEP_PROGRESS|已解析 {len(entities)} 实体, 扫描镜面面")
 
     # ─── 1. 找反射区面 (名字含 内镜片/镜面/lens) ───────────
     print("\n=== 1. 找镜面 ADVANCED_FACE ===")
@@ -305,6 +308,7 @@ def main():
     # ─── 3. 选最长非退化边做半边轮廓 ─────────────────────
     # 镜片轮廓边是 U 形 B-spline (顶→侧→底), 单条即半边轮廓;
     # 退化边 (缝, <5mm) 跳过, 取最长的那条
+    print("STEP_PROGRESS|提取轮廓边...")
     print(f"\n=== 3. 选最长边做半边轮廓 (面 #{fid}) ===")
     edge_samples = []
     for edge in edges:

@@ -27,7 +27,8 @@ import step_verify
 import numpy as np
 
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # line_buffering: stdout 接管道时默认块缓冲, 进度行必须按行即时刷出
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
 
@@ -180,8 +181,12 @@ def geometry_fallback_faces(entities, points):
     1) 粗筛: 原始采样跨度合理 (<2000mm) + Y/Z 跨度在窗口量级
     2) 精筛: 对面积最大的候选做 锚定缝合 + 自检闸门, 取通过中最大者。
     返回与 find_rear_window_faces 同构的 4 元组 (eid, name, bounds, tokens)。"""
+    all_faces = find_all_faces(entities)
+    n_total = len(all_faces)
     coarse = []
-    for fid, name, bounds in find_all_faces(entities):
+    for idx, (fid, name, bounds) in enumerate(all_faces):
+        if idx % 200 == 0:
+            print(f"STEP_PROGRESS|降级扫描面 {idx}/{n_total}")
         edges = st.trace_face_boundary(fid, bounds, entities)
         if not edges:
             continue
@@ -257,8 +262,10 @@ def main():
     args = parser.parse_args()
 
     print(f"解析 STEP: {args.step_file}")
+    print("STEP_PROGRESS|解析 STEP 文件中...")
     entities, points = scs.parse_step(args.step_file)
     print(f"实体: {len(entities)}, 点: {len(points)}")
+    print("STEP_PROGRESS|已解析实体, 查找后挡风面")
 
     # ─── 1. 找后挡风面 ──────────────────────────────────
     print("\n=== 1. 找后挡风 ADVANCED_FACE ===")
@@ -342,6 +349,7 @@ def main():
     fid, name, bounds = target
 
     # ─── 3. 提取完整边界 ────────────────────────────────
+    print("STEP_PROGRESS|缝合轮廓边...")
     print(f"\n=== 3. 提取完整边界 (面 #{fid}, 每边 {args.n} 点) ===")
     outline, edge_info = sample_face_boundary_stitched(fid, bounds, entities, points, args.n)
     if not outline or len(outline) < 4:
