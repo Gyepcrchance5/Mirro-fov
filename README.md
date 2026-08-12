@@ -38,8 +38,7 @@
 
 ```
 mirro-fov-js/
-├── modules/smart/                    ← 智能硬件组 (平台交付物)
-│   ├── public/index.html             ← 组落地页
+├── modules/smart/                    ← 模块目录
 │   └── mirro-fov/                    ← 本模块
 │       ├── engine/                   ← 纯 JS 计算引擎
 │       │   ├── shared/               共享数学 (几何/平面/多边形)
@@ -137,4 +136,4 @@ npm test
 
 ## 📝 开发规范
 
-详见 [DEVELOPMENT_SPEC.md](modules/smart/mirro-fov/docs/DEVELOPMENT_SPEC.md) — 目录结构、架构分层（L0–L6）、路由规范、数据格式、开发流程、测试清单、平台发布步骤。
+详见 [DEVELOPMENT_SPEC.md](modules/smart/mirro-fov/docs/DEVELOPMENT_SPEC.md) — 目录结构、架构分层（L0–L6）、路由规范、数据格式、开发流程、测试清单。
