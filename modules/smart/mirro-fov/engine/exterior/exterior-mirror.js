@@ -260,6 +260,7 @@ function buildTriangles(eye, doorOuterY, ground, mirror, regulation = {}) {
 function sampleVisibility(eye, q, mirror, minMarginMm) {
   const eyes = Array.isArray(eye) ? [eye] : [eye.left, eye.right];
   if (eyes.some(e => !e.every(Number.isFinite)) || !q.every(Number.isFinite)) return { visible: false, reason: 'non-finite' };
+  let marginAcc = undefined; // 双眼各合格点 margin, 取最小
   for (const e of eyes) {
     const pts = findMirrorPointsForTarget(e, q, mirror);
     if (!pts.length) return { visible: false, reason: 'no-solution' };
@@ -279,8 +280,11 @@ function sampleVisibility(eye, q, mirror, minMarginMm) {
       const [u0, v0] = mirror.localUV(pts[0].point);
       return { visible: false, reason: 'off-surface', u: u0, v: v0 };
     }
+    // 记录该眼合格点的最小 margin (供前端显示安全距离)
+    if (marginAcc === undefined) marginAcc = good.d;
+    else if (good.d < marginAcc) marginAcc = good.d;
   }
-  return { visible: true };
+  return marginAcc !== undefined ? { visible: true, d: marginAcc } : { visible: true };
 }
 
 /** 单边采样判定: 线段上 N 内点 + 两端点全部可见 → pass */

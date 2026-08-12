@@ -154,11 +154,26 @@ function verifyExteriorBoth(p, opts = {}) {
     mirrors: [mirrorViz2d(L), mirrorViz2d(R)],
   };
 
+  // 边的最小安全距离 (法规要求 ≥3mm), 供前端显示"还剩多少"
+  function edgeMinMargin(edges) {
+    let min = null;
+    for (const e of edges) {
+      for (const s of e.samples) {
+        if (s.d != null && Number.isFinite(s.d) && (min === null || s.d < min)) min = s.d;
+      }
+    }
+    return min;
+  }
+
   function summary(r) {
     const cc = r.fit.crossCheck || {};
+    const nearMin = edgeMinMargin(r.v.near.edges);
+    const farMin = edgeMinMargin(r.v.far.edges);
     return {
       side: r.side,
       mirrorPass: r.v.mirrorPass, nearPass: r.v.near.pass, farPass: r.v.far.pass,
+      nearMinMargin: nearMin === null ? null : r4(nearMin),
+      farMinMargin: farMin === null ? null : r4(farMin),
       nearEdges: r.v.near.edges.map(e => ({ name: e.name, pass: e.pass, visible: e.samples.filter(s => s.visible).length + '/' + e.samples.length })),
       farEdges: r.v.far.edges.map(e => ({ name: e.name, pass: e.pass, visible: e.samples.filter(s => s.visible).length + '/' + e.samples.length })),
       search: { found: r.search.found, bestPsi: r.search.bestPsi, window: r.search.results.filter(x => x.mirrorPass).map(x => x.psi), results: r.search.results },

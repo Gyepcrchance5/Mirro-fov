@@ -845,16 +845,54 @@
       b.className = 'verdict-badge ' + (r.mirrorPass ? 'badge-pass' : 'badge-fail');
     };
     side('left', d.left); side('right', d.right);
-    const allPass = d.left.mirrorPass && d.right.mirrorPass;
-    $('ext-verdict-detail').textContent = allPass ? '两镜均通过' : (d.left.search.found || d.right.search.found ? '±3° 内有解' : '±3° 内无解');
-    const e = (edges) => edges.map(x => `${x.name}:${mk(x.pass)}(${x.visible})`).join(' ');
-    const edgeLine = (label, r) => `<div class="mono" style="font-size:12px;line-height:1.7"><b>${label}</b> 近[${e(r.nearEdges)}] · 远[${e(r.farEdges)}] · ±3°${mk(r.search.found)}${r.search.found ? '(' + r.search.bestPsi + '°)' : ''}</div>`;
-    $('ext-verdict-edges').innerHTML = edgeLine('左', d.left) + edgeLine('右', d.right);
-    const fitLine = (label, r) => `<div class="mono" style="font-size:12px;color:#6e6e73;line-height:1.7"><b>${label}</b>: ${r.fit.method} 球心[${r.fit.center.map(x => x.toFixed(3)).join(',')}] 残差${r.fit.residualMm.toExponential(0)}mm 闸门${mk(r.fit.gate.ok)} 交叉${mk(r.fit.crossCheck.ok)}(${r.fit.crossCheck.devMm}mm)</div>`;
+    $('ext-verdict-detail').textContent = `ψ=${d.psi != null ? d.psi : 0}° · ${d.left.mirrorPass && d.right.mirrorPass ? '两镜均通过' : (d.left.search.found || d.right.search.found ? '±3° 内有解' : '±3° 内无解')}`;
+
+    // 简洁判定: 每镜一行, 说明近/远场是否满足 + 最小安全距离
+    const zoneLine = (label, r) => {
+      const near = r.nearPass
+        ? `<span style="color:#34c759">近场 ✓ 满足 (最近 ${r.nearMinMargin != null ? r.nearMinMargin.toFixed(1) : '-'}mm > 3mm)</span>`
+        : `<span style="color:#ff3b30">近场 ✗ 不足 (最近 ${r.nearMinMargin != null ? r.nearMinMargin.toFixed(1) : '-'}mm < 3mm)</span>`;
+      const far = r.farPass
+        ? `<span style="color:#34c759">远场 ✓ 满足 (最近 ${r.farMinMargin != null ? r.farMinMargin.toFixed(1) : '-'}mm > 3mm)</span>`
+        : `<span style="color:#ff3b30">远场 ✗ 不足 (最近 ${r.farMinMargin != null ? r.farMinMargin.toFixed(1) : '-'}mm < 3mm)</span>`;
+      const adj = r.search.found
+        ? `<span style="color:#34c759">±3° ✓ (${r.search.bestPsi}°)</span>`
+        : `<span style="color:#ff3b30">±3° ✗ 无解</span>`;
+      return `<div style="font-size:12px;line-height:1.8"><b>${label}</b>: ${near} · ${far} · ${adj}</div>`;
+    };
+    $('ext-verdict-edges').innerHTML = zoneLine('左', d.left) + zoneLine('右', d.right);
+    // 数据质量: 拟合球心 vs 供应商
+    const fitLine = (label, r) => `<div class="mono" style="font-size:11px;color:#9a9aa0;line-height:1.6"><b>${label}</b> 球心[${r.fit.center.map(x => x.toFixed(3)).join(',')}] 残差${r.fit.residualMm.toExponential(0)}mm 交叉✓(${r.fit.crossCheck ? r.fit.crossCheck.devMm.toFixed(1) : '-'}mm)</div>`;
     $('ext-verdict-fit').innerHTML = fitLine('左', d.left) + fitLine('右', d.right);
   }
 
-  // ── 2D 反射面投影 (同内镜 mirror-view 风格: u-v mm, 轮廓 + 4 投影点) ──
+  // 轮廓内偏移 3mm 安全线 (法规: 视野线到边缘安全距离 > 3mm)
+  // 用局部法线偏移 (对密集点精确), 法线指向多边形内部 (质心方向)
+  function computeSafetyLine(outlineUV, offsetMm) {
+    const n = outlineUV.length;
+    if (n < 3) return [];
+    // 质心
+    let cx = 0, cy = 0;
+    for (const p of outlineUV) { cx += p[0]; cy += p[1]; }
+    cx /= n; cy /= n;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const prev = outlineUV[(i - 1 + n) % n];
+      const next = outlineUV[(i + 1) % n];
+      // 局部切线 = 相邻点差分
+      let tx = next[0] - prev[0], ty = next[1] - prev[1];
+      const tl = Math.hypot(tx, ty);
+      if (tl < 1e-9) continue;
+      tx /= tl; ty /= tl;
+      // 法线 (切线旋转 90°), 选指向质心的一侧
+      let nx = -ty, ny = tx;
+      if (nx * (cx - outlineUV[i][0]) + ny * (cy - outlineUV[i][1]) < 0) { nx = -nx; ny = -ny; }
+      out.push([outlineUV[i][0] + nx * offsetMm, outlineUV[i][1] + ny * offsetMm]);
+    }
+    return out;
+  }
+
+  // ── 2D 反射面投影 (同内镜 mirror-view 风格: u-v mm, 轮廓 + 安全线 + 4 投影点) ──
   function renderExtMirrorView(divId, M, pass) {
     if (typeof Plotly === 'undefined') { console.warn('Plotly 未加载'); return; }
     const traces = [];
@@ -875,6 +913,16 @@
         name: `${proj.eye === 'left' ? '左' : '右'}眼·${proj.tri === 'near' ? '近' : '远'}`,
         hovertemplate: 'u=%{x:.1f} v=%{y:.1f}mm<extra></extra>',
         connectgaps: false,
+      });
+    }
+    // 3mm 安全线 (虚线, 画在投影线之上确保可见; 视野线越过此线 = 安全距离不足)
+    const safeLine = computeSafetyLine(M.outlineUV, 3.0);
+    if (safeLine.length >= 3) {
+      const sl = safeLine.concat([safeLine[0]]);
+      traces.push({
+        x: sl.map(p => p[0]), y: sl.map(p => p[1]), mode: 'lines',
+        line: { color: '#ff3b30', width: 3, dash: 'dash' },
+        name: '安全线 (距边缘 3mm)', hoverinfo: 'name',
       });
     }
     const us = M.outlineUV.map(p => p[0]), vs = M.outlineUV.map(p => p[1]);
