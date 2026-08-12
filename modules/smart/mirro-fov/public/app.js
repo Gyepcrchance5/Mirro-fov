@@ -198,7 +198,12 @@
     const hw = m.widthMM / 2, hh = m.heightMM / 2;
     const r = m.cornerRadiusMM || 0;
     const label = r > 0.01 ? `镜面 (R=${(r).toFixed(0)}mm)` : '镜面';
-    const pad = Math.max(hw, hh) * 0.30;
+    // 留白 10mm; 图表容器高度按内容真实比例自适应 (aspect-ratio) →
+    // 扁镜面填满卡片, 无变形无上下留白 (设在 plot 容器自身, 不能设在 h-100 的父级)
+    const pad = 10;
+    const contentW = hw * 2 + pad * 2, contentH = hh * 2 + pad * 2;
+    const viewEl = $('mirror-view');
+    if (viewEl) viewEl.style.aspectRatio = (contentW / contentH).toFixed(3);
 
     // 镜面轮廓: 优先用后端返回的真实轮廓 (STEP 采样), 否则前端退回圆角矩形
     let ox, oy;
@@ -407,10 +412,13 @@
           line: { color: C.projection, width: 2, dash: 'dash' }, name: '覆盖区(3点凸包)', opacity: 0.8 });
       }
     }
-    // 画幅范围: padding 按短边算, 避免扁形状被大量留白挤占
+    // 画幅范围: padding 按短边 15% (下限 10mm); 图表容器高度按内容比例自适应
     const rwW = Math.max(...xs) - Math.min(...xs);
     const rwH = Math.max(...ys) - Math.min(...ys);
-    const pad = Math.min(rwW, rwH) * 0.15 + 20;
+    const pad = Math.max(10, Math.min(rwW, rwH) * 0.15);
+    const rwRatio = (rwW + pad * 2) / (rwH + pad * 2);
+    const rwEl = $('rear-window-view');
+    if (rwEl) rwEl.style.aspectRatio = rwRatio.toFixed(3);
     const nIn = rw.centerLines.filter(c => c.through).length;
     const tzLabel = rw.hasTz ? '透光区' : 'CAS框';
     const pass = rw.pass;
@@ -420,7 +428,7 @@
       borderwidth: 2, borderpad: 6, align: 'center' };
     const layout = {
       xaxis: { title: 'u (玻璃宽向, mm)', range: [Math.min(...xs) - pad, Math.max(...xs) + pad],
-               gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+               scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       yaxis: { title: 'v (玻璃上向, mm)', range: [Math.min(...ys) - pad, Math.max(...ys) + pad],
                gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       margin: { l: 50, r: 20, t: 20, b: 40 },
@@ -999,11 +1007,33 @@
         await saveWizardOutlines(name, d.path);
       }
 
-      // 3. 切校核页: 必须先初始化内镜页 (initInner 创建后挡风行等 DOM),
-      //    再加载新车型 — 否则 loadVehicleConfig 对 null 元素赋值崩溃
+      // 3. 切校核页: 需确保内镜页 DOM 就绪 (后挡风 7 点行等), 但不触发 auto-load;
+      //    initInner 内部的 loadVehicleConfig+doVerify 会与下面的加载产生异步竞态
+      //    (initInner 的 doVerify 晚到达 → 覆盖新车型渲染)
       if (!pages.inner.__inited) {
         pages.inner.__inited = true;
-        await initInner();
+        buildRWCard('rw-row', 'rw-c', '后挡风 CAS 角', 7, RW_LABELS);
+        buildRWCard('tz-row', 'rw-t', '后挡风 透光角', 4, ['透光角1', '透光角2', '透光角3', '透光角4']);
+        for (let i = 0; i < 7; i++) {
+          ['x', 'y', 'z'].forEach(ax => {
+            $('rw-c' + i + '-' + ax).addEventListener('input', () => { rwDirty = true; });
+          });
+        }
+        elVerifyBtn.addEventListener('click', doVerify);
+        elAutoBtn.addEventListener('click', doAutoSearch);
+        $('save-btn').addEventListener('click', doSave);
+        $('save-as-btn').addEventListener('click', doSaveAs);
+        $('delete-btn').addEventListener('click', doDelete);
+        $('catia-btn').addEventListener('click', doCatia);
+        checkCatiaAvailability().then(ok => { if (!ok) { $('catia-btn').disabled = true; $('catia-btn').title = '平台环境不支持 3DE 读取, 请本地使用'; $('catia-btn').textContent = '3DE不可用'; } });
+        $('vehicle-select').addEventListener('change', async (e) => {
+          await loadVehicleConfig(e.target.value);
+          await doVerify();
+        });
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' && e.target.tagName === 'INPUT') doVerify();
+        });
+        await loadVehicles();
       }
       showPage('inner');
       await loadVehicleConfig(d.path);
