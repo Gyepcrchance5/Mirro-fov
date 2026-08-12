@@ -198,12 +198,9 @@
     const hw = m.widthMM / 2, hh = m.heightMM / 2;
     const r = m.cornerRadiusMM || 0;
     const label = r > 0.01 ? `镜面 (R=${(r).toFixed(0)}mm)` : '镜面';
-    // 留白 10mm; 图表容器高度按内容真实比例自适应 (aspect-ratio) →
-    // 扁镜面填满卡片, 无变形无上下留白 (设在 plot 容器自身, 不能设在 h-100 的父级)
+    // 留白 10mm; 图表高度由内容比例 + 容器宽度计算 —— 不能用 CSS aspect-ratio
+    // (Plotly 渲染时 CSS 高度可能未解析 → 0 高度 → 图表不显示)
     const pad = 10;
-    const contentW = hw * 2 + pad * 2, contentH = hh * 2 + pad * 2;
-    const viewEl = $('mirror-view');
-    if (viewEl) viewEl.style.aspectRatio = (contentW / contentH).toFixed(3);
 
     // 镜面轮廓: 优先用后端返回的真实轮廓 (STEP 采样), 否则前端退回圆角矩形
     let ox, oy;
@@ -343,6 +340,14 @@
       shapes,
       legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
+    // 显式高度: 容器宽度 / 内容比例 → Plotly 渲染时拿到像素值
+    // (不能用 CSS aspect-ratio — Plotly 初始化时 CSS 高度可能未解析)
+    const viewEl = $('mirror-view');
+    if (viewEl) {
+      const w = viewEl.parentElement.clientWidth - 20; // panel-frame padding
+      const contentRatio = (hw * 2 + pad * 2) / (hh * 2 + pad * 2);
+      viewEl.style.height = Math.max(120, Math.round(w / contentRatio)) + 'px';
+    }
     Plotly.react('mirror-view', traces, layout, { responsive: true });
   }
 
@@ -412,13 +417,10 @@
           line: { color: C.projection, width: 2, dash: 'dash' }, name: '覆盖区(3点凸包)', opacity: 0.8 });
       }
     }
-    // 画幅范围: padding 按短边 15% (下限 10mm); 图表容器高度按内容比例自适应
+    // 画幅范围: padding 按短边 15% (下限 10mm); 显式高度 → 内容填满无变形无留白
     const rwW = Math.max(...xs) - Math.min(...xs);
     const rwH = Math.max(...ys) - Math.min(...ys);
     const pad = Math.max(10, Math.min(rwW, rwH) * 0.15);
-    const rwRatio = (rwW + pad * 2) / (rwH + pad * 2);
-    const rwEl = $('rear-window-view');
-    if (rwEl) rwEl.style.aspectRatio = rwRatio.toFixed(3);
     const nIn = rw.centerLines.filter(c => c.through).length;
     const tzLabel = rw.hasTz ? '透光区' : 'CAS框';
     const pass = rw.pass;
@@ -438,6 +440,13 @@
       shapes,
       legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
+    // 显式高度: 容器宽度 / 内容比例 → 填满无变形无留白
+    const rwEl = $('rear-window-view');
+    if (rwEl) {
+      const rwCw = rwEl.parentElement.clientWidth - 20;
+      const ratio = (rwW + pad * 2) / (rwH + pad * 2);
+      rwEl.style.height = Math.max(120, Math.round(rwCw / ratio)) + 'px';
+    }
     Plotly.react('rear-window-view', traces, layout, { responsive: true });
     const rwCount = $('rw-count');
     if (rwCount) rwCount.textContent = `中心眼3线穿玻璃 ${nIn}/3 落${tzLabel}内 · ${pass ? 'PASS' : 'FAIL'}`;
