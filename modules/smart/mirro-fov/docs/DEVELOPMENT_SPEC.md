@@ -825,6 +825,168 @@ async function saveNewVehicle() {
 - AI 助手深度集成 (window.__aiActions)
 - 平台落地页 modules/smart/public/index.html (已有)
 
+---
+
+## 13. STEP 轮廓提取方案 (2026-08-11 固化)
+
+### 13.1 两条路径
+
+| | 路径 A: 单零件 STEP (已跑通) | 路径 B: 装配体 STEP (待验证) |
+|---|---|---|
+| **文件** | 每个零件单独导出 STEP | 1 个装配体 STEP |
+| **点坐标** | 不含, 需 3DE COM 逐个选 | 含, 按 MF_ 命名直接读 |
+| **面轮廓** | 按面名匹配 (可能猜不中) | 按 MF_ 命名精确匹配 |
+| **3DE 依赖** | COM 选点 + STEP 导出 | 仅 STEP 导出 |
+| **文件数** | 内镜 2 个 STEP + 5 个 COM 点 | 1 个 STEP |
+| **状态** | ✅ Modena 验证 | ❌ 待验证命名是否保留 |
+| **共享代码** | `step_curve_sampler.py` + `step_topology.py` + 裁剪逻辑 | 同左, 复用 |
+
+### 13.2 路径 A 操作指南 (当前可用)
+
+#### 镜面轮廓提取
+
+```bash
+cd modules/smart/mirro-fov/python
+
+# 方式 1: 自动识别 (按面名 "内镜片/镜面/lens" 匹配)
+python step_topology.py <镜片.stp> 80
+# 输出: <镜片.stp>.mirror-outline.json (outline_local_mm + outline_global_mm)
+
+# 方式 2: 面名不匹配时, 先列出所有面
+python step_topology.py <镜片.stp> --list
+# 然后手动指定面 ID
+python step_topology.py <镜片.stp> --face-id <ID> 80
+```
+
+输出 JSON 字段:
+- `outline_local_mm`: [[lx, ly], ...] 2D 局部坐标 (供 `Mirror.isOnReflectiveSurface` 点在多边形判定)
+- `outline_global_mm`: [[x, y, z], ...] 3D 整车坐标
+- `face_id` / `face_name`: 识别到的反射面
+- `mirrored`: 是否做了 Y 对称补全
+
+#### 后挡风轮廓提取
+
+```bash
+cd modules/smart/mirro-fov/python
+
+# 方式 1: 自动识别 (按面名 "后挡风/rear window/backlight" 匹配)
+python step_rear_window.py <后挡风.stp> --n 30
+
+# 方式 2: 面名不匹配 (常见!), 先列出所有面
+python step_rear_window.py <后挡风.stp> --list
+
+# 方式 3: 手动指定面 ID (后挡风常分成左右两个面)
+python step_rear_window.py <后挡风.stp> --face-id 21268 --n 30
+python step_rear_window.py <后挡风.stp> --face-id 25093 --n 30 -o /tmp/left.json
+# 然后手动合并左右半 (见下方合并脚本)
+```
+
+输出 JSON 字段:
+- `outline_mm`: [[x, y, z], ...] 3D 整车坐标 (mm, 供 `rear_window.outline`)
+
+#### 后挡风左右半合并
+
+后挡风常分成左右两个 ADVANCED_FACE, 需要合并:
+
+```python
+# 合并逻辑 (当前在临时脚本中, 待集成到 step_rear_window.py):
+# 1. 每个面: 按 EDGE_LOOP 顺序遍历边
+# 2. 跳过退化边 (length < 5mm)
+# 3. 跳过中心线边 (Y跨<5 AND |Y均值|<10)
+# 4. B 样条采样后按 VERTEX_POINT 裁剪 (飞线根因!)
+# 5. orient=False 翻转
+# 6. 去首点重复, 拼接到轮廓
+# 7. right_outer + left_outer (不翻转)
+# 8. 闭合: 首尾距离 >5mm 则追加首点
+```
+
+#### 提取结果写入车型 JSON
+
+```json
+// modena.json (内镜)
+{
+  "mirror": {
+    "outline_path": "modena.outline.json"  // 指向镜面轮廓文件
+  },
+  "rear_window": {
+    "outline_path": "modena.rear-window.json"  // 指向后挡风轮廓文件
+  }
+}
+```
+
+引擎自动读取 `outline_path` → 加载完整轮廓 → 校核和渲染使用真实轮廓 (无 outline_path 时退回简化点)。
+
+### 13.3 路径 A 已知限制
+
+| 限制 | 影响 | 规避 |
+|---|---|---|
+| 每个零件单独导出 STEP | 操作繁琐 | 路径 B 解决 |
+| 面名不固定 (如"玻璃"≠"后挡风") | 自动识别失败 | `--list` + `--face-id` 手动选 |
+| B 样条比 EDGE_CURVE 顶点范围长 | 飞线 | 必须按 VERTEX_POINT 裁剪 |
+| 退化边 (<5mm) 采 30 点产生散点 | 视觉杂乱 | 跳过退化边 |
+| 中心线检测误杀短边 | 轮廓缺口 | Y跨<5 AND \|Y均值\|<10 双条件 |
+| 后挡风可能分左右两个面 | 需手动合并 | 分别提取 + 合并脚本 |
+| 后挡风左右不对称 (右735/左571mm) | 待实物确认 | 按实际数据写入 |
+| 不含点坐标 (pivot/眼点等) | 仍需 3DE COM | 路径 B 解决 |
+| 单零件 STEP ~49MB | 上传/解析慢 | 可接受 (~10 秒) |
+
+### 13.4 路径 B 命名约定 (待验证)
+
+在 3DE 中给关键几何命名, 用 `MF_` 前缀:
+
+**点**:
+```
+MF_pivot, MF_center_zero, MF_eye, MF_ground_front, MF_ground_rear
+MF_door_left, MF_door_right (外镜)
+MF_axis_p1_left, MF_axis_y_left, MF_axis_z_left (外镜左轴线)
+MF_axis_p1_right, MF_axis_y_right, MF_axis_z_right (外镜右轴线)
+MF_sphere_center_left, MF_sphere_center_right (外镜供应商球心, 可选)
+```
+
+**面**:
+```
+MF_inner_mirror (内镜反射面)
+MF_rear_window (后挡风面)
+MF_ext_mirror_left, MF_ext_mirror_right (外镜反射面)
+```
+
+**验证清单** (需在 3DE 导出测试 STEP 后确认):
+- [ ] 3DE 命名的点导出后是否为 `CARTESIAN_POINT('MF_pivot', (x,y,z))`
+- [ ] 3DE 命名的面导出后是否为 `ADVANCED_FACE('MF_inner_mirror', ...)`
+- [ ] 装配体 STEP 文件大小
+- [ ] `parse_step()` 解析整车 STEP 的耗时
+- [ ] 坐标系是否为整车坐标 (装配层级导出)
+
+### 13.5 代码集成状态
+
+| 代码 | 位置 | 状态 |
+|---|---|---|
+| `step_curve_sampler.py` | `python/` | ✅ 集成, 18 断言 |
+| `step_topology.py` (镜面) | `python/` | ✅ 集成, Modena 验证 |
+| `step_rear_window.py` (后挡风) | `python/` | ✅ 基础集成, 面识别 + 采样 |
+| B 样条裁剪 (飞线修复) | **临时脚本** | ❌ 未合并到 step_rear_window.py |
+| 左右半合并逻辑 | **临时脚本** | ❌ 未合并到 step_rear_window.py |
+| STEP 上传 API | `routes.js` | ❌ 未实现 (§12.5 计划中) |
+| 路径 B 点坐标提取 | 不存在 | ❌ 未实现 |
+| 路径 B 命名面匹配 | 不存在 | ❌ 未实现 (复用现有面名匹配代码) |
+
+**待集成**: B 样条裁剪 + 左右半合并逻辑需从临时脚本合并到 `step_rear_window.py` 的 `sample_edge_curve` 函数中, 使 `--face-id` 直接输出正确轮廓, 不再需要手动合并。
+
+### 13.6 STEP 提取标准流程 (路径 A, 已固化)
+
+```
+1. 3DE 装配层级选中零件 → 右键 → 另存为 → STEP AP214
+2. python step_topology.py <镜片.stp> 80  (或 --list + --face-id)
+3. python step_rear_window.py <后挡风.stp> --list
+4. python step_rear_window.py <后挡风.stp> --face-id <右半ID> --n 30
+5. python step_rear_window.py <后挡风.stp> --face-id <左半ID> --n 30 -o left.json
+6. 合并左右半 (临时脚本, 待集成)
+7. 将输出 JSON 放到 data/vehicles/ 目录
+8. 车型 JSON 加 outline_path / rear_window.outline_path
+9. 3DE COM 选点 (catia_extract.py, 补充点坐标)
+10. 手输标量参数 (yaw/pitch/SR 等)
+```
+
 ### 11.6 STEP 轮廓提取复盘 (2026-08-11)
 
 #### 遇到的问题与解决
