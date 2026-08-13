@@ -839,7 +839,7 @@ router.post('/api/catia/exterior', jsonParser, (req, res) => {
 });
 
 // ---- 新建向导: STEP 上传 + 解析轮廓 (base64 → 临时文件 → spawn Python) ----
-const STEP_UPLOAD_LIMIT = '100mb';
+const STEP_UPLOAD_LIMIT = '500mb';
 // 提取进度 (按文件名轮询): Python 打印 STEP_PROGRESS|xxx → 收集 → 前端轮询显示
 const stepProgress = new Map();
 router.get('/api/step/progress', (req, res) => {
@@ -983,7 +983,7 @@ router.post('/api/exterior/extract', express.raw({ limit: STEP_UPLOAD_LIMIT, typ
       }
     });
     const finish = (status, payload) => { if (!done) { done = true; extExtractProgress.delete(filename); res.status(status).json(payload); } };
-    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: 'STEP 提取超时 (120 秒)' }); }, 120000);
+    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: 'STEP 提取超时 (600 秒)' }); }, 600000);
 
     child.on('exit', (code) => {
       clearTimeout(timeout);
@@ -1049,7 +1049,7 @@ router.post('/api/interior/extract', express.raw({ limit: STEP_UPLOAD_LIMIT, typ
       }
     });
     const finish = (status, payload) => { if (!done) { done = true; intExtractProgress.delete(filename); res.status(status).json(payload); } };
-    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: '内镜 STEP 提取超时 (120 秒)' }); }, 120000);
+    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: '内镜 STEP 提取超时 (600 秒)' }); }, 600000);
 
     child.on('exit', (code) => {
       clearTimeout(timeout);

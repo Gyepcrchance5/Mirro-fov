@@ -1432,7 +1432,7 @@
         headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
         body: file,
       });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({ ok: false, error: `服务器返回非 JSON (HTTP ${r.status}), 可能 STEP 过大或提取崩溃, 请查看服务终端日志` }));
       if (!d.ok) throw new Error(d.error);
       wizIntResult = d.result || null;
       if (!wizIntResult) throw new Error('提取结果为空');
@@ -1489,6 +1489,12 @@
     if (!wizIntResult) { alert('请先完成整车 STEP 提取'); return; }
     const r = wizIntResult;
     const m = r.mirror || {}, d = r.driver || {}, g = r.ground || {}, rw = r.rear_window || {};
+    // 关键参数缺失防护: pivot/center_zero 缺命名时不能兜底 0 (会静默存错数据 → 校核全错)。
+    // modena 等未命名 STEP 走到这里应阻止保存, 提示补命名。
+    if (!m.pivot || !m.center_zero) {
+      alert('提取缺 pivot 或 center_zero (STEP 未含 MIRROR_PIVOT / MIRROR_CENTER_ZERO 命名点), 无法保存校核。\n\n请让供应商按内镜规范补这两个命名点后重试。\n(眼点/镜面轮廓/地面/yaw·pitch 已自动提取, 仅缺球铰与零位中心。)');
+      return;
+    }
     const mm = v => (v && v.length >= 3) ? [v[0] * 1000, v[1] * 1000, v[2] * 1000] : [0, 0, 0];
     // 后挡风默认 4 点占位 (与 modena 一致; 无 REAR_WINDOW 命名时用)
     const defaultRw = [[4.541629, -0.571227, 1.491361], [5.120844, -0.538903, 1.293511], [5.120844, 0.538903, 1.293511], [4.541629, 0.571227, 1.491361]];
