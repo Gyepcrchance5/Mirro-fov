@@ -358,9 +358,9 @@
           <button id="ext-catia-btn" class="btn btn-sm me-1 btn-solid" title="外镜 3DE 读取 (Python catia_extract 待扩展)">从3DE读取</button>
           <button id="ext-upload-btn" class="btn btn-sm me-1 btn-solid" title="上传整车 STEP 一键提取外镜并校核">上传整车STEP</button>
           <input id="ext-upload-input" type="file" accept=".stp,.step" style="display:none">
-          <button id="ext-save-btn" class="btn btn-sm me-1 btn-outline-accent" title="待做">保存</button>
-          <button id="ext-save-as-btn" class="btn btn-sm me-1 btn-outline-accent" title="待做">另存为</button>
-          <button id="ext-delete-btn" class="btn btn-sm btn-outline-danger" title="待做">删除</button>
+          <button id="ext-save-btn" class="btn btn-sm me-1 btn-outline-accent" title="保存当前外镜车型 (含补录的轴线)">保存</button>
+          <button id="ext-save-as-btn" class="btn btn-sm me-1 btn-outline-accent" title="另存为新外镜车型 (默认车型保护)">另存为</button>
+          <button id="ext-delete-btn" class="btn btn-sm btn-outline-danger" title="删除当前外镜车型 (默认车型保护)">删除</button>
         </div>
       </div>
 
@@ -446,24 +446,32 @@
         <!-- 轴线(左) -->
         <div class="col" style="min-width:130px">
           <div class="card shadow-sm h-100">
-            <div class="card-header py-1 px-2"><div class="card-title mb-0">轴线 (左)</div><small class="text-muted">p1 + 旋转轴</small></div>
+            <div class="card-header py-1 px-2"><div class="card-title mb-0">轴线 (左)</div><small class="text-muted">p1 + 旋转轴 (可补录)</small></div>
             <div class="card-body py-2 px-2">
               <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><small class="unit">m</small><input id="ext-p1-L-x" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><small class="unit">m</small><input id="ext-p1-L-y" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><small class="unit">m</small><input id="ext-p1-L-z" type="number" step="any" class="form-control form-control-sm" readonly></div>
-              <div class="text-muted mt-2 pt-1 border-top" style="font-size:10px" id="ext-dir-L">左轴: --</div>
+              <div class="mb-1 mt-2 pt-1 border-top"><small class="text-muted">旋转轴方向</small></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="ext-axis-L-x" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 X 分量 (整车坐标)"></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="ext-axis-L-y" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 Y 分量"></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="ext-axis-L-z" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 Z 分量"></div>
+              <div class="text-muted mt-2" style="font-size:10px" id="ext-axis-hint-L"></div>
             </div>
           </div>
         </div>
         <!-- 轴线(右) -->
         <div class="col" style="min-width:130px">
           <div class="card shadow-sm h-100">
-            <div class="card-header py-1 px-2"><div class="card-title mb-0">轴线 (右)</div><small class="text-muted">p1 + 旋转轴</small></div>
+            <div class="card-header py-1 px-2"><div class="card-title mb-0">轴线 (右)</div><small class="text-muted">p1 + 旋转轴 (可补录)</small></div>
             <div class="card-body py-2 px-2">
               <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><small class="unit">m</small><input id="ext-p1-R-x" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><small class="unit">m</small><input id="ext-p1-R-y" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><small class="unit">m</small><input id="ext-p1-R-z" type="number" step="any" class="form-control form-control-sm" readonly></div>
-              <div class="text-muted mt-2 pt-1 border-top" style="font-size:10px" id="ext-dir-R">右轴: --</div>
+              <div class="mb-1 mt-2 pt-1 border-top"><small class="text-muted">旋转轴方向</small></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="ext-axis-R-x" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 X 分量 (整车坐标)"></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="ext-axis-R-y" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 Y 分量"></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="ext-axis-R-z" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 Z 分量"></div>
+              <div class="text-muted mt-2" style="font-size:10px" id="ext-axis-hint-R"></div>
             </div>
           </div>
         </div>

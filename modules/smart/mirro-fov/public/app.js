@@ -851,6 +851,7 @@
   // ====== 外后视镜页 (III 类, L+R 合并) ======
   // ============================================================
   let extCurrentPath = null;
+  let extRawConfig = null; // 完整外镜 JSON (含 outline_raw + 轴线), 保存时原样回传
   function initExterior() {
     $('ext-verify-btn').addEventListener('click', doExtVerify);
     $('ext-auto-btn').addEventListener('click', doExtAuto);
@@ -863,9 +864,18 @@
     $('ext-upload-btn').addEventListener('click', () => $('ext-upload-input').click());
     $('ext-upload-input').addEventListener('change', doExtUpload);
     checkCatiaAvailability().then(ok => { if (!ok) { $('ext-catia-btn').disabled = true; $('ext-catia-btn').title = '平台环境不支持 3DE 读取, 请本地使用'; $('ext-catia-btn').textContent = '3DE不可用'; } });
-    $('ext-save-btn').addEventListener('click', () => alert('外镜车型保存待实现: 外镜数据含轮廓点数组, 需完整编辑表单。'));
-    $('ext-save-as-btn').addEventListener('click', () => alert('外镜另存为待实现 (同上)。'));
-    $('ext-delete-btn').addEventListener('click', () => alert('外镜车型删除待实现。'));
+    $('ext-save-btn').addEventListener('click', doExtSave);
+    $('ext-save-as-btn').addEventListener('click', doExtSaveAs);
+    $('ext-delete-btn').addEventListener('click', doExtDelete);
+    // 轴线方向输入实时回显补录提示 (输入过程中即时更新默认轴/真轴状态)
+    ['L', 'R'].forEach(side => {
+      ['x', 'y', 'z'].forEach(ax => {
+        $('ext-axis-' + side + '-' + ax).addEventListener('input', () => {
+          const v = ['x', 'y', 'z'].map(a => parseFloat($('ext-axis-' + side + '-' + a).value));
+          if (v.every(n => Number.isFinite(n))) setExtAxisHint(side, v);
+        });
+      });
+    });
     loadExtVehicles().then(() => loadExtConfig($('ext-vehicle-select').value).then(() => doExtVerify()));
   }
 
@@ -1155,15 +1165,16 @@
       const d = await r.json();
       if (!d.ok) throw new Error(d.error);
       extCurrentPath = d.path;
+      extRawConfig = d.raw || null;
       const set = (id, v) => { const el = $(id); if (el) el.value = v; };
       const L = d.mirrors.left, R = d.mirrors.right;
       set('ext-sr-fit', L.sr_fit); set('ext-sr-nominal', L.sr_nominal); set('ext-sr-tol', L.sr_tolerance);
       ['x', 'y', 'z'].forEach((ax, i) => {
         set('ext-c-L-' + ax, L.sphere_center[i]); set('ext-c-R-' + ax, R.sphere_center[i]);
         set('ext-p1-L-' + ax, L.turret_axis_p1[i]); set('ext-p1-R-' + ax, R.turret_axis_p1[i]);
+        set('ext-axis-L-' + ax, L.rotation_axis_dir[i]); set('ext-axis-R-' + ax, R.rotation_axis_dir[i]);
       });
-      $('ext-dir-L').textContent = '左轴: [' + L.rotation_axis_dir.map(v => v.toFixed(4)).join(', ') + ']';
-      $('ext-dir-R').textContent = '右轴: [' + R.rotation_axis_dir.map(v => v.toFixed(4)).join(', ') + ']';
+      setExtAxisHint('L', L.rotation_axis_dir); setExtAxisHint('R', R.rotation_axis_dir);
       ['x', 'y', 'z'].forEach((ax, i) => {
         set('ext-eye-L-' + ax, d.driver.eye_left_raw[i]);
         set('ext-eye-R-' + ax, d.driver.eye_right_raw[i]);
@@ -1180,6 +1191,104 @@
       $('ext-verdict-edges').innerHTML = ''; $('ext-verdict-fit').textContent = ''; $('ext-auto-status').textContent = '';
       $('ext-status').textContent = '';
     } catch (e) { $('ext-status').textContent = '加载失败: ' + e.message; }
+  }
+
+  // 轴线补录: 默认 [0,1,0] 时提示补录真轴 (STEP 无法自动提取轴线, 已证无此几何)
+  function setExtAxisHint(side, dir) {
+    const el = $('ext-axis-hint-' + side);
+    if (!el) return;
+    const isDefault = Array.isArray(dir) && dir.length >= 3
+      && Math.abs(dir[0]) < 1e-6 && Math.abs(dir[1] - 1) < 1e-6 && Math.abs(dir[2]) < 1e-6;
+    el.style.color = isDefault ? '#ff9f0a' : '#9a9aa0';
+    el.textContent = isDefault
+      ? '使用默认轴 [0,1,0], 建议补录真轴'
+      : '已补录真轴 [' + dir.map(v => v.toFixed(4)).join(', ') + ']';
+  }
+
+  // 读取某侧旋转轴方向输入, 非法 (NaN/零向量) 返回 null
+  function readExtAxis(side) {
+    const v = ['x', 'y', 'z'].map(ax => parseFloat($('ext-axis-' + side + '-' + ax).value));
+    if (v.some(n => !Number.isFinite(n))) return null;
+    if (Math.hypot(v[0], v[1], v[2]) < 1e-9) return null;
+    return v;
+  }
+
+  // 从输入卡回写轴线到完整 JSON 副本 (深拷贝, 不污染 extRawConfig)
+  function extPatchedConfig() {
+    const axisL = readExtAxis('L'), axisR = readExtAxis('R');
+    if (!axisL || !axisR) throw new Error('旋转轴方向向量非法 (需非零 3 维向量)');
+    const config = JSON.parse(JSON.stringify(extRawConfig));
+    if (!config.exterior_mirror_left) config.exterior_mirror_left = {};
+    if (!config.exterior_mirror_right) config.exterior_mirror_right = {};
+    config.exterior_mirror_left.rotation_axis_dir = axisL;
+    config.exterior_mirror_right.rotation_axis_dir = axisR;
+    return config;
+  }
+
+  // 保存 (覆盖当前车型) — 默认车型被后端拦截, 需另存为
+  async function doExtSave() {
+    if (!extRawConfig) { $('ext-status').textContent = '请先加载车型'; return; }
+    const name = $('ext-vehicle-select').selectedOptions[0]?.textContent || '新外镜车型';
+    try {
+      const config = extPatchedConfig();
+      const r = await fetch('api/exterior/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, path: extCurrentPath, config }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error);
+      await loadExtVehicles();
+      await loadExtConfig(d.path);
+      await doExtVerify();
+      $('ext-status').textContent = '已保存: ' + String(d.path || '').split(/[\\/]/).pop();
+    } catch (e) {
+      $('ext-status').textContent = '保存失败: ' + e.message;
+      alert('保存失败: ' + e.message);
+    }
+  }
+
+  // 另存为 (不传 path → 后端按 name 生成新文件; 默认车型保护也在此生效)
+  async function doExtSaveAs() {
+    if (!extRawConfig) { $('ext-status').textContent = '请先加载车型'; return; }
+    const name = (prompt('输入新外镜车型名称:') || '').trim();
+    if (!name) return;
+    try {
+      const config = extPatchedConfig();
+      const r = await fetch('api/exterior/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, config }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error);
+      await loadExtVehicles();
+      await loadExtConfig(d.path);
+      await doExtVerify();
+      $('ext-status').textContent = '已另存为: ' + name;
+    } catch (e) {
+      $('ext-status').textContent = '另存为失败: ' + e.message;
+      alert('另存为失败: ' + e.message);
+    }
+  }
+
+  // 删除当前车型 — 默认车型被后端拦截
+  async function doExtDelete() {
+    if (!extCurrentPath) return;
+    if (!confirm('确定删除该外镜车型？此操作不可撤销。')) return;
+    try {
+      const r = await fetch('api/exterior/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: extCurrentPath }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error);
+      await loadExtVehicles();
+      await loadExtConfig($('ext-vehicle-select').value);
+      await doExtVerify();
+      $('ext-status').textContent = '已删除车型';
+    } catch (e) {
+      $('ext-status').textContent = '删除失败: ' + e.message;
+      alert('删除失败: ' + e.message);
+    }
   }
 
   async function doExtVerify() {

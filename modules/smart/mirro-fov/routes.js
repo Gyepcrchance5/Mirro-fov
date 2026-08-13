@@ -26,6 +26,7 @@ const { verifyExteriorBoth, loadExteriorVehicle, scanExteriorVehicles } = requir
 const VEHICLES_DIR = path.join(__dirname, 'data', 'vehicles');
 const EXTERIOR_DIR = path.join(__dirname, 'data', 'exterior');
 const DEFAULT_VEHICLE = path.join(VEHICLES_DIR, 'modena.json');
+const DEFAULT_EXTERIOR = path.join(EXTERIOR_DIR, 'exterior-vehicle-draft.json');
 // Python 3DE 读取脚本根目录 (内嵌在项目内, 自包含)。
 // 环境变量 MIRRO_FOV_PY_DIR 可覆盖 (指向外部 Python 项目, 如完整 Mirro-fov)。
 const PY_PROJECT = process.env.MIRRO_FOV_PY_DIR
@@ -35,6 +36,11 @@ const PY_PROJECT = process.env.MIRRO_FOV_PY_DIR
 // 严格 === 比较可被大小写变体绕过 → 覆盖/删除默认车型。toLowerCase 统一后比较。
 function isDefaultVehicle(p) {
   return path.resolve(String(p)).toLowerCase() === path.resolve(DEFAULT_VEHICLE).toLowerCase();
+}
+
+// 外镜默认车型判定 (大小写不敏感, 同 isDefaultVehicle): exterior-vehicle-draft.json 为默认草稿车型
+function isDefaultExterior(p) {
+  return path.resolve(String(p)).toLowerCase() === path.resolve(DEFAULT_EXTERIOR).toLowerCase();
 }
 
 // 后挡风轮廓显示点数 (与 Python dashboard RW_N 对齐)
@@ -704,6 +710,7 @@ router.get('/api/exterior/config', (req, res) => {
       ok: true, path: p, vehicle: raw.vehicle,
       driver: raw.driver, ground: raw.ground, door_panel: raw.door_panel, regulation: raw.regulation,
       mirrors: { left: sum(raw.exterior_mirror_left), right: sum(raw.exterior_mirror_right) },
+      raw, // 完整原始 JSON (含 outline_raw 421 点 + 轴线, 供保存时原样回传, 避免前端重建轮廓)
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: friendlyError(e) });
@@ -724,6 +731,54 @@ router.post('/api/exterior/verify', jsonParser, (req, res) => {
     }
     const result = verifyExteriorBoth(body.path || '', { psi });
     res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: friendlyError(e) });
+  }
+});
+
+// ---- 外后视镜: 保存车型 (CRUD) ----
+// 接收完整外镜 JSON (含 outline_raw 轮廓 + 补录的轴线), 落盘 data/exterior/<name>.json
+router.post('/api/exterior/save', jsonParser, (req, res) => {
+  try {
+    const body = req.body || {};
+    const config = body.config && typeof body.config === 'object' ? body.config : body;
+    const name = (body.name || (config.vehicle && config.vehicle.name) || '新外镜车型').trim();
+    if (!name) return res.status(400).json({ ok: false, error: '车型名不能为空' });
+    const safe = name.replace(/[\\/:*?"<>|]/g, '_');
+    const cfgPath = body.path || path.join(EXTERIOR_DIR, `${safe}.json`);
+    // path 越界校验 (对齐 /api/exterior/extract: 只允许写 exterior 目录内)
+    const resolved = path.resolve(cfgPath);
+    if (!resolved.startsWith(path.resolve(EXTERIOR_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能保存到 exterior 目录' });
+    }
+    // 默认车型保护: 不允许直接覆盖 exterior-vehicle-draft.json (大小写不敏感, 对齐 /api/vehicles/save)
+    if (isDefaultExterior(resolved) && !body.forceOverwriteDefault) {
+      return res.status(400).json({ ok: false, error: '不能直接覆盖默认车型 (exterior-vehicle-draft), 请另存为新名' });
+    }
+    // 补全 vehicle.name (另存为时以用户输入名覆盖), 确保与文件名一致
+    if (!config.vehicle) config.vehicle = {};
+    config.vehicle.name = name;
+    fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2), 'utf8');
+    res.json({ ok: true, path: cfgPath, vehicles: scanExteriorVehicles() });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: friendlyError(e) });
+  }
+});
+
+// ---- 外后视镜: 删除车型 (CRUD) ----
+router.post('/api/exterior/delete', jsonParser, (req, res) => {
+  try {
+    const p = req.body.path;
+    if (!p) return res.status(400).json({ ok: false, error: '缺少 path' });
+    const resolved = path.resolve(p);
+    if (isDefaultExterior(resolved)) {
+      return res.status(400).json({ ok: false, error: '不能删除默认车型 (exterior-vehicle-draft)' });
+    }
+    if (!resolved.startsWith(path.resolve(EXTERIOR_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能删除 exterior 目录内车型' });
+    }
+    fs.unlinkSync(resolved);
+    res.json({ ok: true, vehicles: scanExteriorVehicles() });
   } catch (e) {
     res.status(400).json({ ok: false, error: friendlyError(e) });
   }
