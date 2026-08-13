@@ -748,6 +748,43 @@
     } finally { btn.disabled = false; btn.textContent = '从3DE读取'; }
   }
 
+  // 外镜 STEP 上传一键提取: 原始二进制上传 → 自动出车型 → 校核渲染 (无需 3DE)
+  async function doExtUpload() {
+    const input = $('ext-upload-input');
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const btn = $('ext-upload-btn');
+    btn.disabled = true; btn.textContent = '提取中…'; $('ext-status').textContent = '';
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    // 轮询提取进度 (文件名键与服务端 sanitize 一致)
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('api/exterior/extract/progress?name=' + encodeURIComponent(safeName));
+        const d = await r.json();
+        if (d.progress) $('ext-status').textContent = d.progress;
+      } catch (e) { /* 轮询失败忽略, 主请求结果为准 */ }
+    }, 500);
+    try {
+      $('ext-status').textContent = `上传 ${(file.size / 1048576).toFixed(1)}MB, 提取外镜中...`;
+      const r = await fetch('api/exterior/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+        body: file,
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error);
+      await loadExtVehicles();
+      await loadExtConfig(d.path);
+      await doExtVerify();
+      $('ext-status').textContent = '提取完成: ' + String(d.path || '').split(/[\\/]/).pop();
+    } catch (e) {
+      $('ext-status').textContent = '上传提取失败: ' + e.message;
+    } finally {
+      clearInterval(poll);
+      btn.disabled = false; btn.textContent = '上传整车STEP';
+    }
+  }
+
   // ====== 后挡风 / 透光区参数卡动态生成 ======
   function buildRWCard(rowId, idPrefix, labelPrefix, n, labels) {
     const row = $(rowId);
@@ -821,8 +858,10 @@
       await loadExtConfig(e.target.value);
       await doExtVerify();
     });
-    // 顶栏操作 (外镜 3DE 读取)
+    // 顶栏操作 (外镜 3DE 读取 / STEP 上传一键提取)
     $('ext-catia-btn').addEventListener('click', doExtCatia);
+    $('ext-upload-btn').addEventListener('click', () => $('ext-upload-input').click());
+    $('ext-upload-input').addEventListener('change', doExtUpload);
     checkCatiaAvailability().then(ok => { if (!ok) { $('ext-catia-btn').disabled = true; $('ext-catia-btn').title = '平台环境不支持 3DE 读取, 请本地使用'; $('ext-catia-btn').textContent = '3DE不可用'; } });
     $('ext-save-btn').addEventListener('click', () => alert('外镜车型保存待实现: 外镜数据含轮廓点数组, 需完整编辑表单。'));
     $('ext-save-as-btn').addEventListener('click', () => alert('外镜另存为待实现 (同上)。'));

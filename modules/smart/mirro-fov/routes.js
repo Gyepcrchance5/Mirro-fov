@@ -880,6 +880,73 @@ router.post('/api/step/upload', express.raw({ limit: STEP_UPLOAD_LIMIT, type: ()
   }
 });
 
+// ---- 外后视镜: STEP 上传一键提取 (raw 二进制 → 临时文件 → spawn step_exterior_extract) ----
+// 提取进度 (按文件名轮询): Python 打印 STEP_PROGRESS|xxx → 收集 → 前端轮询显示
+const extExtractProgress = new Map();
+router.get('/api/exterior/extract/progress', (req, res) => {
+  const name = String(req.query.name || '');
+  res.json({ ok: true, progress: extExtractProgress.get(name) || null });
+});
+// type: () => true — 同 /api/step/upload: 不挑 Content-Type 一律按原始字节接收
+router.post('/api/exterior/extract', express.raw({ limit: STEP_UPLOAD_LIMIT, type: () => true }), (req, res) => {
+  const filename = decodeURIComponent(req.get('x-filename') || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const buf = req.body; // Buffer
+  if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ ok: false, error: '缺少文件内容' });
+
+  try {
+    fs.mkdirSync(STEP_TMP_DIR, { recursive: true });
+    const stepPath = path.join(STEP_TMP_DIR, filename);
+    fs.writeFileSync(stepPath, buf);
+
+    // 输出名: <stem>.json, 必须落在 exterior 目录内 (路径越界闸门, 同 /api/catia/exterior)
+    const stem = filename.replace(/\.(stp|step)$/i, '');
+    const outPath = path.join(EXTERIOR_DIR, stem + '.json');
+    if (!path.resolve(outPath).startsWith(path.resolve(EXTERIOR_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能写到 exterior 目录' });
+    }
+    try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
+
+    const args = [path.join(__dirname, 'python', 'step_exterior_extract.py'), stepPath, '--output', outPath];
+    const child = spawn('python', args, { cwd: PY_PROJECT, shell: process.platform === 'win32' });
+    let done = false;
+    let stderrTail = '';
+    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-800); });
+    // 收集 stdout 的 STEP_PROGRESS|xxx 进度行, 供 /api/exterior/extract/progress 轮询
+    let stdoutBuf = '';
+    child.stdout.on('data', (d) => {
+      stdoutBuf += d.toString();
+      const lines = stdoutBuf.split('\n');
+      stdoutBuf = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('STEP_PROGRESS|')) {
+          extExtractProgress.set(filename, line.slice('STEP_PROGRESS|'.length).trim());
+        }
+      }
+    });
+    const finish = (status, payload) => { if (!done) { done = true; extExtractProgress.delete(filename); res.status(status).json(payload); } };
+    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: 'STEP 提取超时 (120 秒)' }); }, 120000);
+
+    child.on('exit', (code) => {
+      clearTimeout(timeout);
+      if (code !== 0 || !fs.existsSync(outPath)) {
+        const detail = stderrTail.trim().split('\n').filter(l => l.includes('❌') || l.includes('Error') || l.includes('Traceback')).slice(-3).join(' | ');
+        const suffix = detail ? `。详情: ${detail}` : '';
+        finish(500, { ok: false, error: `外镜 STEP 提取失败 (exit ${code})。请确认文件为含球面镜 (SPHERICAL_SURFACE) 的外镜整车模型。${suffix}` });
+        return;
+      }
+      try {
+        JSON.parse(fs.readFileSync(outPath, 'utf8'));
+        finish(200, { ok: true, path: outPath, vehicles: scanExteriorVehicles() });
+      } catch (e) {
+        finish(500, { ok: false, error: '提取结果解析失败: ' + friendlyError(e) });
+      }
+    });
+    child.on('error', (err) => finish(500, { ok: false, error: 'Python 启动失败: ' + friendlyError(err) }));
+  } catch (e) {
+    res.status(400).json({ ok: false, error: friendlyError(e) });
+  }
+});
+
 // ---- 新建向导: 保存提取的轮廓文件 + 设置车型 outline_path ----
 router.post('/api/vehicles/save-outline', jsonParser, (req, res) => {
   try {
