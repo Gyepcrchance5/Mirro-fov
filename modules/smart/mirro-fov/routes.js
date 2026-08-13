@@ -839,27 +839,127 @@ router.post('/api/catia/exterior', jsonParser, (req, res) => {
 });
 
 // ---- 新建向导: STEP 上传 + 解析轮廓 (base64 → 临时文件 → spawn Python) ----
-const STEP_UPLOAD_LIMIT = '500mb';
+// 500MB 上限: 前端 file.size 预检 + 服务端 content-length/流式计数双保险
+const MAX_STEP_BYTES = 500 * 1024 * 1024;
 // 提取进度 (按文件名轮询): Python 打印 STEP_PROGRESS|xxx → 收集 → 前端轮询显示
 const stepProgress = new Map();
+
+// 通用: 流式写盘 (req 管道到 fs.createWriteStream, 不经堆内存, 防大 STEP 上传 OOM)。
+// - 先查 content-length, >500MB → 413 JSON
+// - 流中计 received, 超 500MB → 中断 + 删临时文件 + 413 JSON
+// - 写盘 finish 后回调 onDone(stepPath) (此时才 spawn, 确保文件已完整落盘)
+// - 写盘/请求 error → 删文件 + onError(status, msg)
+function streamStepToTmp(req, filename, onDone, onError) {
+  const contentLength = Number(req.headers['content-length']);
+  if (Number.isFinite(contentLength) && contentLength > MAX_STEP_BYTES) {
+    return onError(413, '文件过大 (' + Math.round(contentLength / 1048576) + 'MB), 超过 500MB 限制');
+  }
+  let stepPath;
+  try {
+    fs.mkdirSync(STEP_TMP_DIR, { recursive: true });
+    stepPath = path.join(STEP_TMP_DIR, filename);
+  } catch (e) {
+    return onError(500, '无法创建临时目录: ' + friendlyError(e));
+  }
+  // 路径越界闸门 (filename 已 sanitize, 双保险)
+  if (!path.resolve(stepPath).startsWith(path.resolve(STEP_TMP_DIR))) {
+    return onError(400, '路径越界, 只能写到 tmp 目录');
+  }
+  const ws = fs.createWriteStream(stepPath);
+  let received = 0;
+  let settled = false;
+  const fail = (status, msg) => {
+    if (settled) return;
+    settled = true;
+    try { ws.destroy(); } catch (e) { /* ignore */ }
+    try { fs.unlinkSync(stepPath); } catch (e) { /* ignore */ }
+    onError(status, msg);
+  };
+  req.on('data', (chunk) => {
+    received += chunk.length;
+    if (received > MAX_STEP_BYTES) {
+      req.pause();
+      fail(413, '文件过大, 超过 500MB 限制');
+    }
+  });
+  ws.on('finish', () => {
+    if (settled) return;
+    settled = true;
+    if (received === 0) {
+      try { fs.unlinkSync(stepPath); } catch (e) { /* ignore */ }
+      return onError(400, '缺少文件内容');
+    }
+    const heapMB = (process.memoryUsage().heapUsed / 1048576).toFixed(1);
+    const sizeMB = (received / 1048576).toFixed(1);
+    console.log(`[routes][stream] ${filename}: ${sizeMB}MB 落盘完成, heapUsed=${heapMB}MB (流式, 不经堆内存)`);
+    onDone(stepPath);
+  });
+  ws.on('error', (e) => fail(500, '写入临时文件失败: ' + friendlyError(e)));
+  req.on('error', (e) => fail(500, '上传中断: ' + friendlyError(e)));
+  req.pipe(ws);
+}
+
+// 通用: spawn Python 提取脚本 (进度收集 + 动态超时 + 退出处理)。
+// 动态超时 = min(1800s, 120s + 1s/MB): 141MB STEP → ~261s, 不误杀大文件
+function spawnStepExtract(opts) {
+  const { stepPath, outPath, script, extraArgs, progressMap, progressKey, failMsg, success, failure } = opts;
+  let sizeMB = 0;
+  try { sizeMB = fs.statSync(stepPath).size / 1048576; } catch (e) { /* ignore */ }
+  const timeoutMs = Math.min(1800000, 120000 + sizeMB * 1000);
+  console.log(`[routes][spawn] ${progressKey}: size=${sizeMB.toFixed(1)}MB → timeout=${Math.round(timeoutMs / 1000)}s`);
+  const args = [path.join(__dirname, 'python', script), stepPath].concat(extraArgs || []);
+  const child = spawn('python', args, { cwd: PY_PROJECT, shell: process.platform === 'win32' });
+  let done = false;
+  let stderrTail = '';
+  child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-800); });
+  // 收集 stdout 的 STEP_PROGRESS|xxx 进度行, 供轮询
+  // 注意: pipe 的 data chunk 任意大小, 行可能跨 chunk — 必须缓冲到完整行再匹配 (Windows \r\n 行尾)
+  let stdoutBuf = '';
+  child.stdout.on('data', (d) => {
+    stdoutBuf += d.toString();
+    const lines = stdoutBuf.split('\n');
+    stdoutBuf = lines.pop();
+    for (const line of lines) {
+      if (line.startsWith('STEP_PROGRESS|')) {
+        progressMap.set(progressKey, line.slice('STEP_PROGRESS|'.length).trim());
+      }
+    }
+  });
+  const finish = (fn, arg) => { if (done) return; done = true; progressMap.delete(progressKey); fn(arg); };
+  const timeout = setTimeout(() => {
+    try { child.kill(); } catch (e) { /* ignore */ }
+    finish(failure, `${failMsg} (${Math.round(timeoutMs / 1000)} 秒超时)`);
+  }, timeoutMs);
+  child.on('exit', (code) => {
+    clearTimeout(timeout);
+    if (code !== 0 || !fs.existsSync(outPath)) {
+      const detail = stderrTail.trim().split('\n')
+        .filter(l => l.includes('❌') || l.includes('Error') || l.includes('Traceback'))
+        .slice(-3).join(' | ');
+      const suffix = detail ? `。详情: ${detail}` : '';
+      finish(failure, `${failMsg} (exit ${code})。${suffix}`);
+      return;
+    }
+    try {
+      const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+      finish(success, result);
+    } catch (e) {
+      finish(failure, '提取结果解析失败: ' + friendlyError(e));
+    }
+  });
+  child.on('error', (err) => finish(failure, 'Python 启动失败: ' + friendlyError(err)));
+  return { timeoutMs, sizeMB };
+}
 router.get('/api/step/progress', (req, res) => {
   const name = String(req.query.name || '');
   res.json({ ok: true, progress: stepProgress.get(name) || null });
 });
-// type: () => true — 不挑 Content-Type 一律按原始字节接收。浏览器传 File 作 body 时
-// 可能用自己的 MIME 类型覆盖显式设置的 Content-Type, 精确匹配会导致解析失败 (缺少文件内容)
-router.post('/api/step/upload', express.raw({ limit: STEP_UPLOAD_LIMIT, type: () => true }), (req, res) => {
-  // 原始二进制上传 (前端直接发 File body): 无 base64/JSON 开销, 文件名/类型走请求头
+// 原始二进制上传 (前端直接发 File body): 无 base64/JSON 开销, 文件名/类型走请求头
+router.post('/api/step/upload', (req, res) => {
   const filename = decodeURIComponent(req.get('x-filename') || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
   const type = req.get('x-type') || 'mirror'; // mirror | rear-window
-  const buf = req.body; // Buffer
-  if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ ok: false, error: '缺少文件内容' });
 
-  try {
-    fs.mkdirSync(STEP_TMP_DIR, { recursive: true });
-    const stepPath = path.join(STEP_TMP_DIR, filename);
-    fs.writeFileSync(stepPath, buf);
-
+  const onDone = (stepPath) => {
     // 按类型 spawn 对应 Python 提取脚本
     const script = type === 'rear-window' ? 'step_rear_window.py' : 'step_topology.py';
     // step_topology.py 输出 <step>.mirror-outline.json (不支持 --output); step_rear_window.py 支持 --output
@@ -871,45 +971,15 @@ router.post('/api/step/upload', express.raw({ limit: STEP_UPLOAD_LIMIT, type: ()
       : path.join(STEP_TMP_DIR, filename.replace(/\.(stp|step)$/i, '') + '.mirror-outline.json');
     try { fs.unlinkSync(expectedOut); } catch (e) { /* 忽略 */ }
 
-    const args = [path.join(__dirname, 'python', script), stepPath];
-    if (type === 'rear-window') args.push('--n', '30', '--output', expectedOut);
-    else args.push('80');
-
-    const child = spawn('python', args, { cwd: PY_PROJECT, shell: process.platform === 'win32' });
-    let done = false;
-    // 收集 stderr 尾部: 自检闸门/脚本错误的详情会打印到 stderr, 失败时带给前端
-    let stderrTail = '';
-    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-800); });
-    // 收集 stdout 的 STEP_PROGRESS|xxx 进度行, 供 /api/step/progress 轮询
-    // 注意: pipe 的 data chunk 任意大小, 行可能跨 chunk — 必须缓冲到完整行再匹配;
-    // 不能用 /^STEP_PROGRESS\|(.+)$/ — JS 正则 . 不匹配行终止符, Windows \r\n 行尾会失配
-    let stdoutBuf = '';
-    child.stdout.on('data', (d) => {
-      stdoutBuf += d.toString();
-      const lines = stdoutBuf.split('\n');
-      stdoutBuf = lines.pop();  // 保留未完成的行, 等下一个 chunk
-      for (const line of lines) {
-        if (line.startsWith('STEP_PROGRESS|')) {
-          stepProgress.set(filename, line.slice('STEP_PROGRESS|'.length).trim());
-        }
-      }
-    });
-    const finish = (status, payload) => { if (!done) { done = true; stepProgress.delete(filename); res.status(status).json(payload); } };
-    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: 'STEP 解析超时 (60 秒)' }); }, 60000);
-
-    child.on('exit', (code) => {
-      clearTimeout(timeout);
-      if (code !== 0 || !fs.existsSync(expectedOut)) {
-        const detail = stderrTail.trim().split('\n').filter(l => l.includes('❌') || l.includes('自检') || l.includes('Error') || l.includes('Traceback')).slice(-3).join(' | ');
-        const hint = code !== 0
-          ? 'Python 脚本执行失败'
-          : '未提取到目标轮廓 (面名不匹配或模型不含目标面)';
-        const suffix = detail ? `。详情: ${detail}` : '';
-        finish(500, { ok: false, error: `${hint} (exit ${code})。${type === 'mirror' ? '内镜向导需要包含"镜面/内镜片"面的内后视镜 STEP 文件, 外镜整车模型不适用于此向导。' : '请确认文件为后挡风模型 STEP。'}${suffix}` });
-        return;
-      }
-      try {
-        const outlineJson = JSON.parse(fs.readFileSync(expectedOut, 'utf8'));
+    const extraArgs = type === 'rear-window' ? ['--n', '30', '--output', expectedOut] : ['80'];
+    const failMsg = type === 'mirror'
+      ? '内镜向导提取失败 (需含"镜面/内镜片"面的内后视镜 STEP, 外镜整车不适用)'
+      : '后挡风提取失败 (请确认文件为后挡风模型 STEP)';
+    spawnStepExtract({
+      stepPath, outPath: expectedOut, script, extraArgs,
+      progressMap: stepProgress, progressKey: filename,
+      failMsg,
+      success: (outlineJson) => {
         // 提取轮廓点: step_topology 输出 outline_local_mm (2D), step_rear_window 输出 outline_mm (3D, mm)
         // 均以 mm 原样返回前端 (预览/存储一致); 引擎使用时在 load 处 mm→m
         let outline = null;
@@ -925,18 +995,15 @@ router.post('/api/step/upload', express.raw({ limit: STEP_UPLOAD_LIMIT, type: ()
           count = outline.length;
         }
         if (!outline || count < 3) {
-          finish(500, { ok: false, error: 'STEP 解析未产生有效轮廓点' });
-          return;
+          return res.status(500).json({ ok: false, error: 'STEP 解析未产生有效轮廓点' });
         }
-        finish(200, { ok: true, outline, outline_count: count, face_id: outlineJson.face_id || null, face_name: outlineJson.face_name || null });
-      } catch (e) {
-        finish(500, { ok: false, error: 'STEP 解析结果读取失败: ' + friendlyError(e) });
-      }
+        res.json({ ok: true, outline, outline_count: count, face_id: outlineJson.face_id || null, face_name: outlineJson.face_name || null });
+      },
+      failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
     });
-    child.on('error', (err) => finish(500, { ok: false, error: 'Python 启动失败: ' + friendlyError(err) }));
-  } catch (e) {
-    res.status(400).json({ ok: false, error: friendlyError(e) });
-  }
+  };
+
+  streamStepToTmp(req, filename, onDone, (status, msg) => res.status(status).json({ ok: false, error: msg }));
 });
 
 // ---- 外后视镜: STEP 上传一键提取 (raw 二进制 → 临时文件 → spawn step_exterior_extract) ----
@@ -947,16 +1014,10 @@ router.get('/api/exterior/extract/progress', (req, res) => {
   res.json({ ok: true, progress: extExtractProgress.get(name) || null });
 });
 // type: () => true — 同 /api/step/upload: 不挑 Content-Type 一律按原始字节接收
-router.post('/api/exterior/extract', express.raw({ limit: STEP_UPLOAD_LIMIT, type: () => true }), (req, res) => {
+router.post('/api/exterior/extract', (req, res) => {
   const filename = decodeURIComponent(req.get('x-filename') || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const buf = req.body; // Buffer
-  if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ ok: false, error: '缺少文件内容' });
 
-  try {
-    fs.mkdirSync(STEP_TMP_DIR, { recursive: true });
-    const stepPath = path.join(STEP_TMP_DIR, filename);
-    fs.writeFileSync(stepPath, buf);
-
+  const onDone = (stepPath) => {
     // 输出名: <stem>.json, 落在 tmp 提取目录 (向导中途放弃不留 orphan 车型, 保存时才落盘 exterior)
     const stem = filename.replace(/\.(stp|step)$/i, '');
     const outPath = path.join(STEP_TMP_DIR, stem + '.json');
@@ -965,45 +1026,16 @@ router.post('/api/exterior/extract', express.raw({ limit: STEP_UPLOAD_LIMIT, typ
     }
     try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
 
-    const args = [path.join(__dirname, 'python', 'step_exterior_extract.py'), stepPath, '--output', outPath];
-    const child = spawn('python', args, { cwd: PY_PROJECT, shell: process.platform === 'win32' });
-    let done = false;
-    let stderrTail = '';
-    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-800); });
-    // 收集 stdout 的 STEP_PROGRESS|xxx 进度行, 供 /api/exterior/extract/progress 轮询
-    let stdoutBuf = '';
-    child.stdout.on('data', (d) => {
-      stdoutBuf += d.toString();
-      const lines = stdoutBuf.split('\n');
-      stdoutBuf = lines.pop();
-      for (const line of lines) {
-        if (line.startsWith('STEP_PROGRESS|')) {
-          extExtractProgress.set(filename, line.slice('STEP_PROGRESS|'.length).trim());
-        }
-      }
+    spawnStepExtract({
+      stepPath, outPath, script: 'step_exterior_extract.py', extraArgs: ['--output', outPath],
+      progressMap: extExtractProgress, progressKey: filename,
+      failMsg: '外镜 STEP 提取失败, 请确认文件为含球面镜 (SPHERICAL_SURFACE) 的外镜整车模型',
+      success: () => res.json({ ok: true, path: outPath, vehicles: scanExteriorVehicles() }),
+      failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
     });
-    const finish = (status, payload) => { if (!done) { done = true; extExtractProgress.delete(filename); res.status(status).json(payload); } };
-    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: 'STEP 提取超时 (600 秒)' }); }, 600000);
+  };
 
-    child.on('exit', (code) => {
-      clearTimeout(timeout);
-      if (code !== 0 || !fs.existsSync(outPath)) {
-        const detail = stderrTail.trim().split('\n').filter(l => l.includes('❌') || l.includes('Error') || l.includes('Traceback')).slice(-3).join(' | ');
-        const suffix = detail ? `。详情: ${detail}` : '';
-        finish(500, { ok: false, error: `外镜 STEP 提取失败 (exit ${code})。请确认文件为含球面镜 (SPHERICAL_SURFACE) 的外镜整车模型。${suffix}` });
-        return;
-      }
-      try {
-        JSON.parse(fs.readFileSync(outPath, 'utf8'));
-        finish(200, { ok: true, path: outPath, vehicles: scanExteriorVehicles() });
-      } catch (e) {
-        finish(500, { ok: false, error: '提取结果解析失败: ' + friendlyError(e) });
-      }
-    });
-    child.on('error', (err) => finish(500, { ok: false, error: 'Python 启动失败: ' + friendlyError(err) }));
-  } catch (e) {
-    res.status(400).json({ ok: false, error: friendlyError(e) });
-  }
+  streamStepToTmp(req, filename, onDone, (status, msg) => res.status(status).json({ ok: false, error: msg }));
 });
 
 // ---- 内后视镜: STEP 上传一键提取 (raw 二进制 → 临时文件 → spawn step_interior_extract) ----
@@ -1013,16 +1045,10 @@ router.get('/api/interior/extract/progress', (req, res) => {
   const name = String(req.query.name || '');
   res.json({ ok: true, progress: intExtractProgress.get(name) || null });
 });
-router.post('/api/interior/extract', express.raw({ limit: STEP_UPLOAD_LIMIT, type: () => true }), (req, res) => {
+router.post('/api/interior/extract', (req, res) => {
   const filename = decodeURIComponent(req.get('x-filename') || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const buf = req.body; // Buffer
-  if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ ok: false, error: '缺少文件内容' });
 
-  try {
-    fs.mkdirSync(STEP_TMP_DIR, { recursive: true });
-    const stepPath = path.join(STEP_TMP_DIR, filename);
-    fs.writeFileSync(stepPath, buf);
-
+  const onDone = (stepPath) => {
     const stem = filename.replace(/\.(stp|step)$/i, '');
     const outPath = path.join(STEP_TMP_DIR, stem + '.json');
     // 路径越界闸门: 输出必须落在 STEP_TMP_DIR 内 (对齐 /api/exterior/extract)
@@ -1031,45 +1057,68 @@ router.post('/api/interior/extract', express.raw({ limit: STEP_UPLOAD_LIMIT, typ
     }
     try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
 
-    const args = [path.join(__dirname, 'python', 'step_interior_extract.py'), stepPath, '--output', outPath];
-    const child = spawn('python', args, { cwd: PY_PROJECT, shell: process.platform === 'win32' });
-    let done = false;
-    let stderrTail = '';
-    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-800); });
-    // 收集 stdout 的 STEP_PROGRESS|xxx 进度行, 供 /api/interior/extract/progress 轮询
-    let stdoutBuf = '';
-    child.stdout.on('data', (d) => {
-      stdoutBuf += d.toString();
-      const lines = stdoutBuf.split('\n');
-      stdoutBuf = lines.pop();
-      for (const line of lines) {
-        if (line.startsWith('STEP_PROGRESS|')) {
-          intExtractProgress.set(filename, line.slice('STEP_PROGRESS|'.length).trim());
-        }
-      }
+    spawnStepExtract({
+      stepPath, outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
+      progressMap: intExtractProgress, progressKey: filename,
+      failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜座) 的整车 STEP',
+      success: (result) => res.json({ ok: true, path: outPath, result }),
+      failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
     });
-    const finish = (status, payload) => { if (!done) { done = true; intExtractProgress.delete(filename); res.status(status).json(payload); } };
-    const timeout = setTimeout(() => { try { child.kill(); } catch (e) {} finish(500, { ok: false, error: '内镜 STEP 提取超时 (600 秒)' }); }, 600000);
+  };
 
-    child.on('exit', (code) => {
-      clearTimeout(timeout);
-      if (code !== 0 || !fs.existsSync(outPath)) {
-        const detail = stderrTail.trim().split('\n').filter(l => l.includes('❌') || l.includes('Error') || l.includes('Traceback')).slice(-3).join(' | ');
-        const suffix = detail ? `。详情: ${detail}` : '';
-        finish(500, { ok: false, error: `内镜 STEP 提取失败 (exit ${code})。请确认文件为含内镜 (命名点/镜座) 的整车 STEP。${suffix}` });
-        return;
-      }
-      try {
-        const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
-        finish(200, { ok: true, path: outPath, result });
-      } catch (e) {
-        finish(500, { ok: false, error: '提取结果解析失败: ' + friendlyError(e) });
-      }
-    });
-    child.on('error', (err) => finish(500, { ok: false, error: 'Python 启动失败: ' + friendlyError(err) }));
-  } catch (e) {
-    res.status(400).json({ ok: false, error: friendlyError(e) });
+  streamStepToTmp(req, filename, onDone, (status, msg) => res.status(status).json({ ok: false, error: msg }));
+});
+
+// ---- 重试提取: STEP 已在盘 (data/tmp), 不重传, 直接重新 spawn ----
+// 提取失败/超时后, 临时 STEP 文件仍留在 data/tmp, 点"重试提取"复用该文件
+router.post('/api/exterior/extract/retry', jsonParser, (req, res) => {
+  const name = String((req.body && req.body.name) || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+  if (!name) return res.status(400).json({ ok: false, error: '缺少文件名 name' });
+  const stepPath = path.join(STEP_TMP_DIR, name);
+  if (!path.resolve(stepPath).startsWith(path.resolve(STEP_TMP_DIR))) {
+    return res.status(400).json({ ok: false, error: '路径越界, 只能读取 tmp 目录' });
   }
+  if (!fs.existsSync(stepPath)) {
+    return res.status(404).json({ ok: false, error: '临时 STEP 文件不存在 (可能已被清理), 请重新上传' });
+  }
+  const stem = name.replace(/\.(stp|step)$/i, '');
+  const outPath = path.join(STEP_TMP_DIR, stem + '.json');
+  if (!path.resolve(outPath).startsWith(path.resolve(STEP_TMP_DIR))) {
+    return res.status(400).json({ ok: false, error: '路径越界, 只能写到 tmp 目录' });
+  }
+  try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
+  spawnStepExtract({
+    stepPath, outPath, script: 'step_exterior_extract.py', extraArgs: ['--output', outPath],
+    progressMap: extExtractProgress, progressKey: name,
+    failMsg: '外镜 STEP 提取失败, 请确认文件为含球面镜 (SPHERICAL_SURFACE) 的外镜整车模型',
+    success: () => res.json({ ok: true, path: outPath, vehicles: scanExteriorVehicles() }),
+    failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
+  });
+});
+
+router.post('/api/interior/extract/retry', jsonParser, (req, res) => {
+  const name = String((req.body && req.body.name) || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+  if (!name) return res.status(400).json({ ok: false, error: '缺少文件名 name' });
+  const stepPath = path.join(STEP_TMP_DIR, name);
+  if (!path.resolve(stepPath).startsWith(path.resolve(STEP_TMP_DIR))) {
+    return res.status(400).json({ ok: false, error: '路径越界, 只能读取 tmp 目录' });
+  }
+  if (!fs.existsSync(stepPath)) {
+    return res.status(404).json({ ok: false, error: '临时 STEP 文件不存在 (可能已被清理), 请重新上传' });
+  }
+  const stem = name.replace(/\.(stp|step)$/i, '');
+  const outPath = path.join(STEP_TMP_DIR, stem + '.json');
+  if (!path.resolve(outPath).startsWith(path.resolve(STEP_TMP_DIR))) {
+    return res.status(400).json({ ok: false, error: '路径越界, 只能写到 tmp 目录' });
+  }
+  try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
+  spawnStepExtract({
+    stepPath, outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
+    progressMap: intExtractProgress, progressKey: name,
+    failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜座) 的整车 STEP',
+    success: (result) => res.json({ ok: true, path: outPath, result }),
+    failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
+  });
 });
 
 // ---- 新建向导: 保存提取的轮廓文件 + 设置车型 outline_path ----
@@ -1112,6 +1161,20 @@ router.post('/api/vehicles/save-outline', jsonParser, (req, res) => {
 router.use(express.static(path.join(__dirname, 'public')));
 router.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ---- JSON 错误处理器 (放所有路由之后, module.exports 之前) ----
+// 统一把 413 / 中间件错误 (body-parser 非法 JSON 等) 返回 JSON 而非 HTML。
+// 注意: 上传端点已改流式写盘 (不再 express.raw), 413 由 streamStepToTmp 直接返回;
+// 此 handler 兜底任何 next(err) 传出的错误 (含 jsonParser 语法错误)。
+router.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const code = err && (err.status || err.statusCode);
+  const limited = err && (err.code === 'LIMIT_FILE_SIZE' || err.code === 'LIMIT_PAYLOAD' ||
+    err.type === 'entity.too.large' || code === 413);
+  const status = limited ? 413 : (code || 500);
+  const message = limited ? '文件过大, 超过 500MB 限制' : friendlyError(err);
+  res.status(status).json({ ok: false, error: message });
 });
 
 module.exports = router;

@@ -45,6 +45,68 @@
   let currentOutlineLocal = null; // 真实反射区轮廓 [[lx,ly] mm] (STEP 采样, 从车型加载)
   let currentRwOutline = null;   // 后挡风完整轮廓 [[x,y,z] m] (STEP 采样, 从车型加载)
 
+  // 提取失败后重试所用的 sanitize 文件名 (STEP 已在盘, 重试不重传)
+  let extLastSafeName = null;    // 外镜校核页 (doExtUpload)
+  let wizExtLastSafeName = null; // 外镜向导 (doWizExtUpload)
+  let wizIntLastSafeName = null; // 内镜向导 (doWizIntUpload)
+
+  // ====== 通用 XHR 上传 (流式进度 + JSON 解析 + 友好错误) ======
+  // fetch(body:file) 无上传进度; 改用 XMLHttpRequest:
+  // - xhr.upload.onprogress 显示 "上传 N%"
+  // - onload 内 try/catch JSON.parse, 非 JSON 响应返回友好错误 (不抛 SyntaxError)
+  // - 统一 resolve 返回 { ok, error, ... }, 调用方 await 后判 d.ok
+  function uploadStep(url, file, opts) {
+    opts = opts || {};
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      const headers = Object.assign({ 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, opts.headers || {});
+      for (const k of Object.keys(headers)) xhr.setRequestHeader(k, headers[k]);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && typeof opts.onProgress === 'function') opts.onProgress(e.loaded, e.total);
+      };
+      xhr.onload = () => {
+        let d;
+        try { d = JSON.parse(xhr.responseText); }
+        catch (e) { d = { ok: false, error: `服务器返回非 JSON (HTTP ${xhr.status}), 可能 STEP 过大或提取崩溃, 请查看服务终端日志` }; }
+        if (d && d.ok && typeof opts.onResult === 'function') opts.onResult(d);
+        if (d && !d.ok && typeof opts.onError === 'function') opts.onError(d);
+        resolve(d);
+      };
+      xhr.onerror = () => {
+        const d = { ok: false, error: '网络错误, 上传失败 (请确认服务正在运行)' };
+        if (typeof opts.onError === 'function') opts.onError(d);
+        resolve(d);
+      };
+      xhr.ontimeout = () => {
+        const d = { ok: false, error: '上传超时' };
+        if (typeof opts.onError === 'function') opts.onError(d);
+        resolve(d);
+      };
+      xhr.send(file);
+    });
+  }
+
+  // 通用: 在 result 元素后动态注入一个"重试提取"按钮 (不依赖 index.html, 满足"尽量不动 index.html")
+  function ensureRetryBtn(resultId, onClick) {
+    const resultEl = $(resultId);
+    if (!resultEl || !resultEl.parentNode) return null;
+    let btn = $(resultId + '-retry');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = resultId + '-retry';
+      btn.type = 'button';
+      btn.className = 'btn btn-outline-accent btn-sm ms-2';
+      btn.textContent = '重试提取';
+      btn.style.display = 'none';
+      btn.addEventListener('click', onClick);
+      resultEl.parentNode.insertBefore(btn, resultEl.nextSibling);
+    }
+    return btn;
+  }
+  function showRetry(resultId, onClick) { const b = ensureRetryBtn(resultId, onClick); if (b) b.style.display = ''; }
+  function hideRetry(resultId) { const b = $(resultId + '-retry'); if (b) b.style.display = 'none'; }
+
   // ====== 参数收集 ======
   const pv = (el, def) => { const v = parseFloat(el.value); return isNaN(v) ? def : v; };
 
@@ -759,9 +821,16 @@
     const input = $('ext-upload-input');
     const file = input.files && input.files[0];
     if (!file) return;
+    // 预检: 超过 500MB 前端直接拦截 (服务端 content-length/流式计数双保险)
+    if (file.size > 500 * 1024 * 1024) {
+      alert('文件 ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制, 请确认 STEP 文件');
+      return;
+    }
     const btn = $('ext-upload-btn');
     btn.disabled = true; btn.textContent = '提取中…'; $('ext-status').textContent = '';
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    extLastSafeName = safeName;
+    hideRetry('ext-status');
     // 轮询提取进度 (文件名键与服务端 sanitize 一致)
     const poll = setInterval(async () => {
       try {
@@ -771,23 +840,58 @@
       } catch (e) { /* 轮询失败忽略, 主请求结果为准 */ }
     }, 500);
     try {
-      $('ext-status').textContent = `上传 ${(file.size / 1048576).toFixed(1)}MB, 提取外镜中...`;
-      const r = await fetch('api/exterior/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
-        body: file,
+      $('ext-status').textContent = `上传 0%, 提取外镜中...`;
+      const d = await uploadStep('api/exterior/extract', file, {
+        onProgress: (loaded, total) => {
+          if (total > 0) $('ext-status').textContent = `上传 ${(loaded / total * 100).toFixed(0)}%, 提取外镜中...`;
+        },
       });
-      const d = await r.json();
       if (!d.ok) throw new Error(d.error);
       await loadExtVehicles();
       await loadExtConfig(d.path);
       await doExtVerify();
       $('ext-status').textContent = '提取完成: ' + String(d.path || '').split(/[\\/]/).pop();
+      hideRetry('ext-status');
     } catch (e) {
       $('ext-status').textContent = '上传提取失败: ' + e.message;
+      showRetry('ext-status', doExtRetry);
     } finally {
       clearInterval(poll);
       btn.disabled = false; btn.textContent = '上传整车STEP';
+    }
+  }
+
+  // 重试提取: STEP 已在盘 (data/tmp), 不重传, 调 /api/exterior/extract/retry 重新 spawn
+  async function doExtRetry() {
+    const safeName = extLastSafeName || '';
+    if (!safeName) { alert('没有可重试的文件, 请重新上传'); return; }
+    const retryBtn = $('ext-status-retry');
+    if (retryBtn) retryBtn.disabled = true;
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('api/exterior/extract/progress?name=' + encodeURIComponent(safeName));
+        const d = await r.json();
+        if (d.progress) $('ext-status').textContent = d.progress;
+      } catch (e) { /* 忽略 */ }
+    }, 500);
+    try {
+      $('ext-status').textContent = '重试提取中...';
+      const r = await fetch('api/exterior/extract/retry', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: safeName }),
+      });
+      const d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      if (!d.ok) throw new Error(d.error);
+      await loadExtVehicles();
+      await loadExtConfig(d.path);
+      await doExtVerify();
+      $('ext-status').textContent = '提取完成: ' + String(d.path || '').split(/[\\/]/).pop();
+      hideRetry('ext-status');
+    } catch (e) {
+      $('ext-status').textContent = '重试提取失败: ' + e.message;
+    } finally {
+      clearInterval(poll);
+      if (retryBtn) retryBtn.disabled = false;
     }
   }
 
@@ -932,13 +1036,16 @@
   async function parseStepFile(fileInput, resultDiv, type) {
     const file = fileInput.files[0];
     if (!file) { resultDiv.className = 'wizard-result'; resultDiv.textContent = '请先选择文件'; return; }
+    // 预检: 超过 500MB 前端直接拦截
+    if (file.size > 500 * 1024 * 1024) {
+      alert('文件 ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制, 请确认 STEP 文件');
+      return;
+    }
     const parseBtn = $('wiz-parse-' + (type === 'mirror' ? 'mirror' : 'rw'));
     if (parseBtn) parseBtn.disabled = true;
     resultDiv.className = 'wizard-result';
     try {
-      resultDiv.textContent = `上传 ${(file.size / 1048576).toFixed(1)}MB, 解析轮廓中...`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 120000);
+      resultDiv.textContent = `上传 0%, 解析轮廓中...`;
       // 轮询提取进度 (文件名键与服务端 sanitize 一致)
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const poll = setInterval(async () => {
@@ -948,20 +1055,15 @@
           if (d.progress) resultDiv.textContent = d.progress;
         } catch (e) { /* 轮询失败忽略, 主请求结果为准 */ }
       }, 500);
-      let resp;
+      let data;
       try {
-        resp = await fetch(API_BASE + '/step/upload', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/octet-stream',
-            'X-Filename': encodeURIComponent(file.name),
-            'X-Type': type,
+        data = await uploadStep(API_BASE + '/step/upload', file, {
+          onProgress: (loaded, total) => {
+            if (total > 0) resultDiv.textContent = `上传 ${(loaded / total * 100).toFixed(0)}%, 解析轮廓中...`;
           },
-          body: file,
-          signal: controller.signal,
+          headers: { 'X-Type': type },
         });
-      } finally { clearTimeout(timer); clearInterval(poll); }
-      const data = await resp.json();
+      } finally { clearInterval(poll); }
       if (data.ok) {
         resultDiv.className = 'wizard-result ok';
         resultDiv.textContent = `提取 ${data.outline_count} 点轮廓`;
@@ -978,7 +1080,7 @@
       }
     } catch (err) {
       resultDiv.className = 'wizard-result err';
-      resultDiv.textContent = err.name === 'AbortError' ? '解析超时 (120 秒), 请重试或确认 STEP 文件类型' : `失败: ${err.message}`;
+      resultDiv.textContent = `失败: ${err.message}`;
     } finally {
       if (parseBtn) parseBtn.disabled = false;
     }
@@ -1202,11 +1304,18 @@
     const input = $('wiz-ext-step');
     const file = input.files && input.files[0];
     if (!file) { $('wiz-ext-result').className = 'wizard-result'; $('wiz-ext-result').textContent = '请先选择文件'; return; }
+    // 预检: 超过 500MB 前端直接拦截
+    if (file.size > 500 * 1024 * 1024) {
+      alert('文件 ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制, 请确认 STEP 文件');
+      return;
+    }
     const btn = $('wiz-ext-upload-btn');
     btn.disabled = true; btn.textContent = '提取中…';
     const resultDiv = $('wiz-ext-result');
     resultDiv.className = 'wizard-result';
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    wizExtLastSafeName = safeName;
+    hideRetry('wiz-ext-result');
     const poll = setInterval(async () => {
       try {
         const r = await fetch('api/exterior/extract/progress?name=' + encodeURIComponent(safeName));
@@ -1215,41 +1324,83 @@
       } catch (e) { /* 轮询失败忽略 */ }
     }, 500);
     try {
-      resultDiv.textContent = `上传 ${(file.size / 1048576).toFixed(1)}MB, 提取外镜中...`;
-      const r = await fetch('api/exterior/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
-        body: file,
+      resultDiv.textContent = `上传 0%, 提取外镜中...`;
+      const d = await uploadStep('api/exterior/extract', file, {
+        onProgress: (loaded, total) => {
+          if (total > 0) resultDiv.textContent = `上传 ${(loaded / total * 100).toFixed(0)}%, 提取外镜中...`;
+        },
       });
-      const d = await r.json();
       if (!d.ok) throw new Error(d.error);
-      wizExtPath = d.path;
-      // raw config (含 outline_raw + 轴线 + regulation), 保存时原样回传
-      const cfgR = await fetch('api/exterior/config?path=' + encodeURIComponent(d.path));
-      const cfg = await cfgR.json();
-      if (!cfg.ok) throw new Error(cfg.error);
-      wizExtRaw = cfg.raw || null;
-      // 轴线自动填入 step2 (若 STEP 含镜体坐标系 AXIS2_PLACEMENT_3D); 未提取到则保留默认 [0,1,0]+橙色警告
-      const axL = cfg.mirrors && cfg.mirrors.left ? cfg.mirrors.left.rotation_axis_dir : null;
-      const axR = cfg.mirrors && cfg.mirrors.right ? cfg.mirrors.right.rotation_axis_dir : null;
-      if (axL && !isWizExtDefaultAxis(axL)) setWizExtAxisInputs('L', axL, '已从 STEP 自动提取');
-      if (axR && !isWizExtDefaultAxis(axR)) setWizExtAxisInputs('R', axR, '已从 STEP 自动提取');
-      // verify 结果: viz.mirrors[].outlineUV + left/right.fit (球面偏差/球心)
-      const vR = await fetch('api/exterior/verify', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: d.path, psi: 0 }),
-      });
-      const v = await vR.json();
-      if (!v.ok) throw new Error(v.error);
-      renderWizExtPreview(v);
+      await wizExtHandleResult(d);
       resultDiv.className = 'wizard-result ok';
       resultDiv.textContent = '提取完成';
+      hideRetry('wiz-ext-result');
     } catch (e) {
       resultDiv.className = 'wizard-result err';
       resultDiv.textContent = '提取失败: ' + e.message;
+      showRetry('wiz-ext-result', doWizExtRetry);
     } finally {
       clearInterval(poll);
       btn.disabled = false; btn.textContent = '上传并提取';
+    }
+  }
+
+  // 提取结果后处理: 读 config(raw) + verify(viz) → 预览 (上传与重试共用)
+  async function wizExtHandleResult(d) {
+    wizExtPath = d.path;
+    // raw config (含 outline_raw + 轴线 + regulation), 保存时原样回传
+    const cfgR = await fetch('api/exterior/config?path=' + encodeURIComponent(d.path));
+    const cfg = await cfgR.json();
+    if (!cfg.ok) throw new Error(cfg.error);
+    wizExtRaw = cfg.raw || null;
+    // 轴线自动填入 step2 (若 STEP 含镜体坐标系 AXIS2_PLACEMENT_3D); 未提取到则保留默认 [0,1,0]+橙色警告
+    const axL = cfg.mirrors && cfg.mirrors.left ? cfg.mirrors.left.rotation_axis_dir : null;
+    const axR = cfg.mirrors && cfg.mirrors.right ? cfg.mirrors.right.rotation_axis_dir : null;
+    if (axL && !isWizExtDefaultAxis(axL)) setWizExtAxisInputs('L', axL, '已从 STEP 自动提取');
+    if (axR && !isWizExtDefaultAxis(axR)) setWizExtAxisInputs('R', axR, '已从 STEP 自动提取');
+    // verify 结果: viz.mirrors[].outlineUV + left/right.fit (球面偏差/球心)
+    const vR = await fetch('api/exterior/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: d.path, psi: 0 }),
+    });
+    const v = await vR.json();
+    if (!v.ok) throw new Error(v.error);
+    renderWizExtPreview(v);
+  }
+
+  // 重试提取: STEP 已在盘, 不重传, 调 /api/exterior/extract/retry 重新 spawn
+  async function doWizExtRetry() {
+    const resultDiv = $('wiz-ext-result');
+    const retryBtn = $('wiz-ext-result-retry');
+    if (retryBtn) retryBtn.disabled = true;
+    const safeName = wizExtLastSafeName || '';
+    if (!safeName) { alert('没有可重试的文件, 请重新上传'); return; }
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('api/exterior/extract/progress?name=' + encodeURIComponent(safeName));
+        const d = await r.json();
+        if (d.progress) resultDiv.textContent = d.progress;
+      } catch (e) { /* 忽略 */ }
+    }, 500);
+    try {
+      resultDiv.className = 'wizard-result';
+      resultDiv.textContent = '重试提取中...';
+      const r = await fetch('api/exterior/extract/retry', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: safeName }),
+      });
+      const d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      if (!d.ok) throw new Error(d.error);
+      await wizExtHandleResult(d);
+      resultDiv.className = 'wizard-result ok';
+      resultDiv.textContent = '提取完成';
+      hideRetry('wiz-ext-result');
+    } catch (e) {
+      resultDiv.className = 'wizard-result err';
+      resultDiv.textContent = '重试提取失败: ' + e.message;
+    } finally {
+      clearInterval(poll);
+      if (retryBtn) retryBtn.disabled = false;
     }
   }
 
@@ -1413,11 +1564,18 @@
     const input = $('wiz-int-step');
     const file = input.files && input.files[0];
     if (!file) { $('wiz-int-result').className = 'wizard-result'; $('wiz-int-result').textContent = '请先选择文件'; return; }
+    // 预检: 超过 500MB 前端直接拦截
+    if (file.size > 500 * 1024 * 1024) {
+      alert('文件 ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制, 请确认 STEP 文件');
+      return;
+    }
     const btn = $('wiz-int-upload-btn');
     btn.disabled = true; btn.textContent = '提取中…';
     const resultDiv = $('wiz-int-result');
     resultDiv.className = 'wizard-result';
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    wizIntLastSafeName = safeName;
+    hideRetry('wiz-int-result');
     const poll = setInterval(async () => {
       try {
         const r = await fetch('api/interior/extract/progress?name=' + encodeURIComponent(safeName));
@@ -1426,27 +1584,69 @@
       } catch (e) { /* 轮询失败忽略 */ }
     }, 500);
     try {
-      resultDiv.textContent = `上传 ${(file.size / 1048576).toFixed(1)}MB, 提取内镜中...`;
-      const r = await fetch('api/interior/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
-        body: file,
+      resultDiv.textContent = `上传 0%, 提取内镜中...`;
+      const d = await uploadStep('api/interior/extract', file, {
+        onProgress: (loaded, total) => {
+          if (total > 0) resultDiv.textContent = `上传 ${(loaded / total * 100).toFixed(0)}%, 提取内镜中...`;
+        },
       });
-      const d = await r.json().catch(() => ({ ok: false, error: `服务器返回非 JSON (HTTP ${r.status}), 可能 STEP 过大或提取崩溃, 请查看服务终端日志` }));
       if (!d.ok) throw new Error(d.error);
-      wizIntResult = d.result || null;
-      if (!wizIntResult) throw new Error('提取结果为空');
-      renderWizIntPreview(wizIntResult);
-      $('wiz-int-confirm').innerHTML = wizIntSummaryHtml(wizIntResult);
-      $('wiz-int-summary-final').innerHTML = wizIntSummaryHtml(wizIntResult);
+      wizIntHandleResult(d);
       resultDiv.className = 'wizard-result ok';
       resultDiv.textContent = '提取完成';
+      hideRetry('wiz-int-result');
     } catch (e) {
       resultDiv.className = 'wizard-result err';
       resultDiv.textContent = '提取失败: ' + e.message;
+      showRetry('wiz-int-result', doWizIntRetry);
     } finally {
       clearInterval(poll);
       btn.disabled = false; btn.textContent = '上传并提取';
+    }
+  }
+
+  // 提取结果后处理: 预览镜面轮廓 + 参数摘要 (上传与重试共用)
+  function wizIntHandleResult(d) {
+    wizIntResult = d.result || null;
+    if (!wizIntResult) throw new Error('提取结果为空');
+    renderWizIntPreview(wizIntResult);
+    $('wiz-int-confirm').innerHTML = wizIntSummaryHtml(wizIntResult);
+    $('wiz-int-summary-final').innerHTML = wizIntSummaryHtml(wizIntResult);
+  }
+
+  // 重试提取: STEP 已在盘, 不重传, 调 /api/interior/extract/retry 重新 spawn
+  async function doWizIntRetry() {
+    const resultDiv = $('wiz-int-result');
+    const retryBtn = $('wiz-int-result-retry');
+    if (retryBtn) retryBtn.disabled = true;
+    const safeName = wizIntLastSafeName || '';
+    if (!safeName) { alert('没有可重试的文件, 请重新上传'); return; }
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('api/interior/extract/progress?name=' + encodeURIComponent(safeName));
+        const d = await r.json();
+        if (d.progress) resultDiv.textContent = d.progress;
+      } catch (e) { /* 忽略 */ }
+    }, 500);
+    try {
+      resultDiv.className = 'wizard-result';
+      resultDiv.textContent = '重试提取中...';
+      const r = await fetch('api/interior/extract/retry', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: safeName }),
+      });
+      const d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      if (!d.ok) throw new Error(d.error);
+      wizIntHandleResult(d);
+      resultDiv.className = 'wizard-result ok';
+      resultDiv.textContent = '提取完成';
+      hideRetry('wiz-int-result');
+    } catch (e) {
+      resultDiv.className = 'wizard-result err';
+      resultDiv.textContent = '重试提取失败: ' + e.message;
+    } finally {
+      clearInterval(poll);
+      if (retryBtn) retryBtn.disabled = false;
     }
   }
 

@@ -336,3 +336,61 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 
 ## 执行顺序
 7.1 (提取器) → 7.4 (测试对照 modena) → 7.2 (后端) → 7.3 (前端) → 验收。
+
+---
+
+# 阶段 8 — 大文件上传鲁棒性
+
+> 目的: 防止大 STEP(141MB+)上传失败/崩溃/解析失败。第一梯队: 流式写盘+上传进度+JSON错误+预检+动态超时+失败重试提取。
+
+## 风险与对策
+1. OOM(express.raw 全量缓冲)→ **流式写盘**(req 管道到 fs.createWriteStream, 不经堆内存)
+2. 无上传进度(像卡死)→ **XHR upload.onprogress**
+3. 413/500 返 HTML → **Express JSON error handler**
+4. 超 500mb 限制 → **前端预检 file.size + 服务端 content-length/流式计数双保险**
+5. 固定超时误杀大文件 → **动态超时 = 120s + 1s/MB, 上限 1800s**
+6. 提取失败要重传 → **重试提取接口**(tmp STEP 已在盘, 不重传)
+
+## 实现
+
+### 8.1 后端 routes.js
+- **流式写盘**: 三个上传端点(/api/step/upload, /api/exterior/extract, /api/interior/extract)去掉 express.raw, 改为:
+  - 读 content-length, >500MB → 413 JSON
+  - req.pipe(fs.createWriteStream(stepPath)), 流中计 received, 超 500MB → 中断+删文件+413 JSON
+  - finish 后 spawn Python (同现有逻辑)
+  - 抽公共 helper `streamStepToTmp(req, filename, onDone, onError)` 复用三处
+- **JSON error handler**: router 末尾加 `router.use((err, req, res, next) => {...})`, err.code==='LIMIT_...'/413 → {ok:false,error:'文件过大'}, 其他 → {ok:false,error:friendlyError(err)}, 统一 JSON 不再 HTML
+- **动态超时**: spawn 后 `const sizeMB = fs.statSync(stepPath).size/1048576; const timeout = Math.min(1800000, 120000 + sizeMB*1000);`
+- **重试提取**: `POST /api/interior/extract/retry` {name} → 找 data/tmp/<name> STEP 重 spawn; 外镜同理 /api/exterior/extract/retry。返回同 extract。
+
+### 8.2 前端 app.js
+- **上传函数改 XHR**(doWizIntUpload, doWizExtUpload, parseStepFile, doExtUpload):
+  - `const xhr = new XMLHttpRequest(); xhr.open('POST', url);`
+  - `xhr.upload.onprogress = e => { resultDiv.textContent = '上传 '+(e.loaded/e.total*100).toFixed(0)+'%'; };`
+  - `xhr.onload = () => { const d = JSON.parse(xhr.responseText).catch?.(...); ... }` (用 try/catch JSON.parse)
+  - xhr.setRequestHeader('X-Filename', ...); xhr.send(file);
+  - 提取进度轮询保留(上传完后再轮询提取进度)
+- **预检**: 上传前 `if (file.size > 500*1024*1024) { alert('文件 '+MB+' 超过 500MB 限制'); return; }`
+- **重试按钮**: 提取失败时 resultDiv 旁显示"重试提取"按钮, 调 retry 接口(不重传)
+
+### 8.3 抽公共上传 helper (前端)
+- `uploadStep(url, file, {onProgress, onResult, onError, headers})` 统一 XHR 上传逻辑, 四处调用复用
+
+## 约束
+1. 禁止改 engine/**。
+2. 后端只改 routes.js; 前端只改 app.js (index.html 尽量不动)。
+3. 流式写盘必须正确处理: 中断删除临时文件、content-length 缺失时靠流计数、finish 后才 spawn。
+4. 保留路径越界闸门 + filename sanitize + 进度轮询。
+5. node -c + npm test 全绿。
+
+## 验收门槛
+- modena(141MB)上传: 显示上传进度%→18s 提取成功→结果正确(镜面轮廓238点/yaw-23.5/pitch5)。
+- 流式: 上传期间 Node 堆内存不随文件大小暴涨(观察 process.memoryUsage, 141MB 文件堆 <100MB 增量)。
+- 超 500MB: 前端预检拦截 + 服务端 413 返 JSON(非 HTML)。
+- JSON error handler: 强制触发一个中间件错误 → 返回 JSON。
+- 动态超时: modena(141MB)算出 ~260s, 不误杀。
+- 重试: 模拟提取超时/失败 → 点"重试提取"→ 不重传, 重新 spawn 出结果。
+- npm test 全绿。
+
+## 执行顺序
+8.1(后端流式+JSON错误+动态超时)→ 8.2/8.3(前端XHR+预检+重试)→ 验收(modena 实测)。
