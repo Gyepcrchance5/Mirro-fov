@@ -71,7 +71,7 @@
             <span class="input-group-text">车型</span>
             <select id="vehicle-select" class="form-select"></select>
           </div>
-          <button id="catia-btn" class="btn btn-sm me-1 btn-solid" title="从 3DE 读取坐标 (需 Python + CATIA)">从3DE读取</button>
+          <button id="catia-btn" class="btn btn-sm me-1 btn-solid" title="从 3DE 读取坐标 (需 Python + CATIA)" style="display:none">从3DE读取</button>
           <button id="save-btn" class="btn btn-sm me-1 btn-outline-accent">保存</button>
           <button id="save-as-btn" class="btn btn-sm me-1 btn-outline-accent" title="把当前参数另存为新的车型文件">另存为</button>
           <button id="delete-btn" class="btn btn-sm btn-outline-danger">删除</button>
@@ -460,6 +460,97 @@
           <div class="wizard-nav">
             <button id="wiz-ext-step3-prev" class="btn btn-outline-accent">上一步</button>
             <button id="wiz-ext-save-btn" class="btn btn-solid">保存并校核</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ═══════ 内后视镜新建向导 (阶段 7: 一 STEP 全自动) ═══════ -->
+    <div id="wizard-interior-page" style="display:none">
+      <div class="top-bar">
+        <button id="wiz-int-back" class="btn btn-outline-secondary btn-sm me-2">← 返回</button>
+        <h4 class="top-title mb-0">新建内后视镜车型</h4>
+      </div>
+
+      <div class="center-wrap">
+
+        <!-- Step 0: 基本信息 -->
+        <div class="wizard-step" data-step="0">
+          <div class="step-head"><span class="step-num">1</span>基本信息</div>
+          <div class="wizard-card">
+            <div class="wizard-body">
+              <div class="wizard-field">
+                <label class="wizard-label">车型名称</label>
+                <input id="wiz-int-name" type="text" class="form-control form-control-sm" placeholder="例如: 新内镜车型A">
+              </div>
+              <div class="wizard-field">
+                <label class="wizard-label">镜子类型</label>
+                <input type="text" class="form-control form-control-sm" value="内后视镜 (I 类, 平面镜)" readonly>
+              </div>
+            </div>
+          </div>
+          <div class="wizard-nav">
+            <button id="wiz-int-step0-next" class="btn btn-solid">下一步</button>
+          </div>
+        </div>
+
+        <!-- Step 1: 上传整车 STEP → 提取 → 预览镜面轮廓 2D + 参数摘要 -->
+        <div class="wizard-step" data-step="1" style="display:none">
+          <div class="step-head"><span class="step-num">2</span>上传整车 STEP 并提取</div>
+          <div class="wizard-card">
+            <div class="wizard-body">
+              <div class="wizard-section">
+                <div class="wizard-section-title">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></div>
+                <input id="wiz-int-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
+                <div class="wizard-actions">
+                  <button id="wiz-int-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
+                  <span id="wiz-int-result" class="wizard-result">选择文件后自动提取</span>
+                </div>
+              </div>
+              <div class="wizard-preview" id="wiz-int-preview" style="display:none">
+                <div id="wiz-int-plot" style="height:220px"></div>
+                <div id="wiz-int-summary" class="text-muted" style="font-size:11px;line-height:1.7"></div>
+              </div>
+            </div>
+          </div>
+          <div class="wizard-nav">
+            <button id="wiz-int-step1-prev" class="btn btn-outline-accent">上一步</button>
+            <button id="wiz-int-step1-next" class="btn btn-solid">下一步</button>
+          </div>
+        </div>
+
+        <!-- Step 2: 参数确认 (只读) -->
+        <div class="wizard-step" data-step="2" style="display:none">
+          <div class="step-head"><span class="step-num">3</span>参数确认</div>
+          <div class="wizard-card">
+            <div class="wizard-body">
+              <div class="wizard-field">
+                <label class="wizard-label">提取参数摘要 (只读)</label>
+                <div id="wiz-int-confirm" class="text-muted" style="font-size:12px;line-height:1.9">尚未提取, 请先返回上一步上传整车 STEP。</div>
+              </div>
+            </div>
+          </div>
+          <div class="wizard-nav">
+            <button id="wiz-int-step2-prev" class="btn btn-outline-accent">上一步</button>
+            <button id="wiz-int-step2-next" class="btn btn-solid">下一步</button>
+          </div>
+        </div>
+
+        <!-- Step 3: 保存并校核 -->
+        <div class="wizard-step" data-step="3" style="display:none">
+          <div class="step-head"><span class="step-num">4</span>保存并校核</div>
+          <div class="wizard-card">
+            <div class="wizard-body">
+              <div class="wizard-field">
+                <label class="wizard-label">确认信息</label>
+                <div id="wiz-int-summary-final" class="text-muted" style="font-size:12px;line-height:1.8">提取完成, 保存为内镜车型并跳转校核页。</div>
+              </div>
+            </div>
+          </div>
+          <div class="wizard-nav">
+            <button id="wiz-int-step3-prev" class="btn btn-outline-accent">上一步</button>
+            <button id="wiz-int-save-btn" class="btn btn-solid">保存并校核</button>
           </div>
         </div>
 

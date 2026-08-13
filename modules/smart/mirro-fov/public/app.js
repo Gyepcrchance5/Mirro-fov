@@ -109,6 +109,7 @@
     exterior: $('exterior-page'),
     'wizard-inner': $('wizard-inner-page'),
     'wizard-exterior': $('wizard-exterior-page'),
+    'wizard-interior': $('wizard-interior-page'),
   };
   function showPage(name) {
     Object.entries(pages).forEach(([k, el]) => {
@@ -130,6 +131,10 @@
       $('wizard-exterior-page').__inited = true;
       initWizardExterior();
     }
+    if (name === 'wizard-interior' && !$('wizard-interior-page').__inited) {
+      $('wizard-interior-page').__inited = true;
+      initWizardInterior();
+    }
     if (name === 'landing') wizardMode = 'verify';
   }
 
@@ -146,7 +151,7 @@
   });
   $('type-back-btn').addEventListener('click', () => showPage('landing'));
   $('select-inner-btn').addEventListener('click', () => {
-    if (wizardMode === 'new') showPage('wizard-inner');
+    if (wizardMode === 'new') showPage('wizard-interior');
     else showPage('inner');
   });
   $('select-exterior-btn').addEventListener('click', () => {
@@ -1369,6 +1374,187 @@
     });
     setWizExtAxisHint('L', [0, 1, 0]);
     setWizExtAxisHint('R', [0, 1, 0]);
+  }
+
+  // ====== 内后视镜新建向导 (阶段 7: 一 STEP 全自动) ======
+  let wizIntResult = null;  // 提取的完整内镜 JSON (modena.json 结构, 含 _meta.outline_local_mm)
+
+  function wizardIntNext(current) {
+    $('wizard-interior-page').querySelector('.wizard-step[data-step="' + current + '"]').style.display = 'none';
+    $('wizard-interior-page').querySelector('.wizard-step[data-step="' + (current + 1) + '"]').style.display = '';
+  }
+  function wizardIntPrev(current) {
+    $('wizard-interior-page').querySelector('.wizard-step[data-step="' + current + '"]').style.display = 'none';
+    $('wizard-interior-page').querySelector('.wizard-step[data-step="' + (current - 1) + '"]').style.display = '';
+  }
+
+  function fmtWizIntVec(v) {
+    return v && v.length >= 3 ? '[' + v.map(x => (Number.isFinite(x) ? x.toFixed(4) : '-')).join(', ') + ']' : 'null';
+  }
+  function wizIntSummaryHtml(r) {
+    const m = r.mirror || {}, d = r.driver || {}, g = r.ground || {}, rw = r.rear_window || {};
+    const missing = (r._meta && r._meta.missing_named) || [];
+    const lines = [
+      '镜面: 宽 ' + (m.width != null ? (m.width * 1000).toFixed(2) + 'mm' : 'null') +
+        ' · 高 ' + (m.height != null ? (m.height * 1000).toFixed(2) + 'mm' : 'null'),
+      '安装角: yaw ' + (m.yaw != null ? m.yaw.toFixed(2) + '°' : 'null') +
+        ' · pitch ' + (m.pitch != null ? m.pitch.toFixed(2) + '°' : 'null'),
+      'pivot ' + fmtWizIntVec(m.pivot) + ' · center_zero ' + fmtWizIntVec(m.center_zero),
+      '眼点 ' + fmtWizIntVec(d.eye_center) + ' · IPD ' + ((d.interpupillary_distance || 0) * 1000).toFixed(1) + 'mm',
+      '地面 前 ' + fmtWizIntVec(g.front_mid) + ' · 后 ' + fmtWizIntVec(g.rear_mid),
+      '后挡风 ' + (rw.outline && rw.outline.length ? rw.outline.length + ' 点' : '未命名 (可空)'),
+    ];
+    if (missing.length) lines.push('<span style="color:#ff9f0a">缺命名: ' + missing.join('; ') + '</span>');
+    return lines.join('<br>');
+  }
+
+  // Step 1: 上传整车 STEP → 提取到 tmp → 预览镜面轮廓 2D + 参数摘要
+  async function doWizIntUpload() {
+    const input = $('wiz-int-step');
+    const file = input.files && input.files[0];
+    if (!file) { $('wiz-int-result').className = 'wizard-result'; $('wiz-int-result').textContent = '请先选择文件'; return; }
+    const btn = $('wiz-int-upload-btn');
+    btn.disabled = true; btn.textContent = '提取中…';
+    const resultDiv = $('wiz-int-result');
+    resultDiv.className = 'wizard-result';
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('api/interior/extract/progress?name=' + encodeURIComponent(safeName));
+        const d = await r.json();
+        if (d.progress) resultDiv.textContent = d.progress;
+      } catch (e) { /* 轮询失败忽略 */ }
+    }, 500);
+    try {
+      resultDiv.textContent = `上传 ${(file.size / 1048576).toFixed(1)}MB, 提取内镜中...`;
+      const r = await fetch('api/interior/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+        body: file,
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error);
+      wizIntResult = d.result || null;
+      if (!wizIntResult) throw new Error('提取结果为空');
+      renderWizIntPreview(wizIntResult);
+      $('wiz-int-confirm').innerHTML = wizIntSummaryHtml(wizIntResult);
+      $('wiz-int-summary-final').innerHTML = wizIntSummaryHtml(wizIntResult);
+      resultDiv.className = 'wizard-result ok';
+      resultDiv.textContent = '提取完成';
+    } catch (e) {
+      resultDiv.className = 'wizard-result err';
+      resultDiv.textContent = '提取失败: ' + e.message;
+    } finally {
+      clearInterval(poll);
+      btn.disabled = false; btn.textContent = '上传并提取';
+    }
+  }
+
+  // 预览: 镜面轮廓 2D (outline_local_mm 闭合折线) + 尺寸/安装角标注 (平面镜, 无球面偏差)
+  function renderWizIntPreview(r) {
+    const ol = r._meta && r._meta.outline_local_mm;
+    $('wiz-int-preview').style.display = '';
+    const m = r.mirror || {};
+    if (typeof Plotly === 'undefined') {
+      $('wiz-int-summary').innerHTML = wizIntSummaryHtml(r);
+      return;
+    }
+    if (!ol || ol.length < 3) {
+      $('wiz-int-summary').innerHTML = '无镜面轮廓 (缺 INNER_MIRROR_GLASS 命名面)。<br>' + wizIntSummaryHtml(r);
+      return;
+    }
+    const xs = ol.map(p => p[0]), ys = ol.map(p => p[1]);
+    const uMin = Math.min(...xs), uMax = Math.max(...xs), vMin = Math.min(...ys), vMax = Math.max(...ys);
+    const pad = Math.max(uMax - uMin, vMax - vMin) * 0.15;
+    xs.push(xs[0]); ys.push(ys[0]);
+    Plotly.newPlot('wiz-int-plot', [{
+      x: xs, y: ys, mode: 'lines+markers',
+      line: { color: '#0071e3', width: 2 },
+      marker: { size: 3, color: '#0071e3' },
+      fill: 'toself', fillcolor: 'rgba(0,113,227,0.08)',
+    }], {
+      xaxis: { title: 'u (mm)', range: [uMin - pad, uMax + pad], scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+      yaxis: { title: 'v (mm)', range: [vMin - pad, vMax + pad], gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+      margin: { l: 50, r: 10, t: 24, b: 40 },
+      paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+      font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
+      title: { text: '内镜轮廓 · ' + ol.length + ' 点', font: { size: 12, color: '#6e6e73' } },
+    }, { responsive: true });
+    $('wiz-int-summary').innerHTML = wizIntSummaryHtml(r);
+  }
+
+  // Step 3: 保存并校核 — 提取 JSON → 扁平字段 → /api/vehicles/save + save-outline → 跳 inner-page
+  async function doWizIntSave() {
+    const name = ($('wiz-int-name').value || '新内镜车型').trim();
+    if (!wizIntResult) { alert('请先完成整车 STEP 提取'); return; }
+    const r = wizIntResult;
+    const m = r.mirror || {}, d = r.driver || {}, g = r.ground || {}, rw = r.rear_window || {};
+    const mm = v => (v && v.length >= 3) ? [v[0] * 1000, v[1] * 1000, v[2] * 1000] : [0, 0, 0];
+    // 后挡风默认 4 点占位 (与 modena 一致; 无 REAR_WINDOW 命名时用)
+    const defaultRw = [[4.541629, -0.571227, 1.491361], [5.120844, -0.538903, 1.293511], [5.120844, 0.538903, 1.293511], [4.541629, 0.571227, 1.491361]];
+    const rwOutline = rw.outline && rw.outline.length >= 3 ? rw.outline : defaultRw;
+    const payload = {
+      name,
+      widthMM: m.width != null ? m.width * 1000 : 224.796,
+      heightMM: m.height != null ? m.height * 1000 : 50.794,
+      cornerRadiusMM: (m.corner_radius || 0.01) * 1000,
+      yawDeg: m.yaw != null ? m.yaw : -23.5,
+      pitchDeg: m.pitch != null ? m.pitch : 5.0,
+      pvMM: mm(m.pivot), czMM: mm(m.center_zero),
+      eyeMM: mm(d.eye_center), ipdMM: (d.interpupillary_distance || 0.065) * 1000,
+      gfMM: mm(g.front_mid), grMM: mm(g.rear_mid),
+      rwMM: rwOutline.map(mm),
+      rwTMM: (rw.transparent_zone || []).map(mm),
+      groundZ: g.front_mid ? g.front_mid[2] : ((r.visualization && r.visualization.ground_plane_z) || 0),
+    };
+    const btn = $('wiz-int-save-btn');
+    btn.disabled = true; btn.textContent = '保存中…';
+    try {
+      const resp = await fetch(API_BASE + '/vehicles/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await resp.json();
+      if (!d.ok) throw new Error(d.error);
+
+      // 保存镜面轮廓 (outline_local_mm → 车型 outline_path)
+      const ol = r._meta && r._meta.outline_local_mm;
+      if (ol && ol.length >= 3) {
+        const safe = name.replace(/[\\/:*?"<>|]/g, '_');
+        const saveResp = await fetch(API_BASE + '/vehicles/save-outline', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vehiclePath: d.path, kind: 'mirror', outlineFile: { source: 'step_interior_extract', outline_local_mm: ol, outline_count: ol.length, unit: 'mm' } }),
+        });
+        const sd = await saveResp.json();
+        if (!sd.ok) throw new Error(sd.error);
+      }
+
+      // 跳校核页 (复用 saveNewVehicle 的 DOM 就绪 + 加载逻辑, 避免 initInner 竞态)
+      if (!pages.inner.__inited) {
+        pages.inner.__inited = true;
+        initInnerDOM();
+      }
+      await loadVehicles();
+      $('vehicle-select').value = d.path;
+      showPage('inner');
+      await loadVehicleConfig(d.path);
+      await doVerify();
+    } catch (e) {
+      alert('保存失败: ' + e.message);
+    } finally { btn.disabled = false; btn.textContent = '保存并校核'; }
+  }
+
+  function initWizardInterior() {
+    $('wiz-int-back').addEventListener('click', () => showPage('mirror-type'));
+    $('wiz-int-step0-next').addEventListener('click', () => wizardIntNext(0));
+    $('wiz-int-step1-prev').addEventListener('click', () => wizardIntPrev(1));
+    $('wiz-int-step1-next').addEventListener('click', () => wizardIntNext(1));
+    $('wiz-int-step2-prev').addEventListener('click', () => wizardIntPrev(2));
+    $('wiz-int-step2-next').addEventListener('click', () => wizardIntNext(2));
+    $('wiz-int-step3-prev').addEventListener('click', () => wizardIntPrev(3));
+    $('wiz-int-upload-btn').addEventListener('click', () => doWizIntUpload());
+    $('wiz-int-step').addEventListener('change', () => doWizIntUpload());
+    $('wiz-int-save-btn').addEventListener('click', doWizIntSave);
   }
 
   async function loadExtVehicles() {

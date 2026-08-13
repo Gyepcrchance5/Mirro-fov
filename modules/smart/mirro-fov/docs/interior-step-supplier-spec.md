@@ -99,7 +99,7 @@
 
 ## 六、开放项状态
 
-1. **命名点补充** — ⏳ 待供应商确认:能否新增 `MIRROR_PIVOT`/`MIRROR_CENTER_ZERO`/`GROUND_FRONT`/`GROUND_REAR`/`REAR_WINDOW`/`REAR_WINDOW_TZ` 命名。modena 已有命名习惯,预计可行。
+1. **命名点补充** — ✅ 命名规范由我方定义,供应商按规范提供。新增 `MIRROR_PIVOT`/`MIRROR_CENTER_ZERO`/`GROUND_FRONT`/`GROUND_REAR`/`REAR_WINDOW`/`REAR_WINDOW_TZ`/`INNER_MIRROR_GLASS`;眼点沿用 modena 已有 `眼椭圆`/`左右眼椭圆中心点`。
 2. **yaw/pitch 推导** — 🟡 需对照 modena 验证:镜面法向 + pivot/center_zero → yaw/pitch 的推导规则;若不稳,改用显式命名方向。
 3. **center_zero 近似** — 🟡 若镜片在 STEP 中处于零位,质心近似可行;否则必须用命名点。待验证镜片在 STEP 中的姿态。
 4. **后挡风透光区口径** — ⏳ 待确认:`REAR_WINDOW_TZ` 是透光区(可开启/可见区)还是 CAS 整框,与 modena transparent_zone 定义对齐。

@@ -266,3 +266,73 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 - 仅玻璃 STEP (无轴系) → 轴线默认 [0,1,0] + 提示, 不崩。
 - 仅参数 STEP (无球面) → 提示"未找到球面镜片面"。
 - npm test 全绿。
+
+---
+
+# 阶段 7 — 内镜工作流重构 + 一 STEP 全自动提取
+
+> 命名规范由我方定义 (2026-08-13), 供应商按 docs/interior-step-supplier-spec.md 提供。
+> 目的: 内镜切到与外镜一致的"一个 STEP 全自动"流程, 替换旧的"分类上传+5点手动"。
+
+## 现状 (探针已确认)
+- modena STEP 已命名: `内后视镜镜座`(151面总成), `眼椭圆`/`左右眼椭圆中心点`(眼点0mm命中), `curb0 ground line` 曲线, `头部包络`。
+- modena 未命名: pivot, center_zero, 后挡风, 地面前后点。
+- 测试策略: modena 直接验证 eye/镜片轮廓/yaw-pitch/地面(曲线); pivot/center_zero/地面点 用**内存注入命名点**验证 (parse modena → 注入 CARTESIAN_POINT MIRROR_PIVOT 等 at modena.json 坐标 → 提取 → 比对)。后挡风无命名, 提取逻辑实现+合成小测, 标注待供应商 STEP。
+
+## 实现
+
+### 7.1 python/step_interior_extract.py (新, 平行 step_exterior_extract.py)
+核心 `extract_interior(entities, points)`:
+- `find_named_points`: 
+  - 眼: `眼椭圆`→eye_center; `左侧眼椭圆中心点`/`右侧眼椭圆中心点`→IPD(ΔY)
+  - `MIRROR_PIVOT`→pivot; `MIRROR_CENTER_ZERO`→center_zero
+  - `GROUND_FRONT`/`GROUND_REAR`→ground (兜底: `curb0 ground line` 曲线端点)
+- `find_glass_face`: 
+  - 优先命名面 `INNER_MIRROR_GLASS`; 兜底 `内后视镜镜座` 总成内最大平面
+  - 追踪边界得轮廓 (复用 step_topology.trace_face_boundary / sample_edge_vertex_chained) → outline_local_mm (2D, 镜面局部 u-v) + 3D
+  - width/height/corner_radius 由轮廓跨度导出 (对齐现有 wizard 逻辑: floor of extents)
+- `find_rear_window`: 命名面 `REAR_WINDOW`→外框轮廓; `REAR_WINDOW_TZ`→透光区
+- `derive_yaw_pitch`: 镜面法向 (glass plane normal) + pivot + center_zero → yaw/pitch (对照 modena -23.5/5 验证; 若镜片在 STEP 处零位则 yaw/pitch=0 且 center_zero=质心)
+- 输出 JSON 对齐 modena.json 结构 (mirror/driver/ground/rear_window/regulation/visualization), mm→m
+- 边界: 缺命名 → stderr 提示哪个缺, 该字段 null, 不崩
+- 进度行 STEP_PROGRESS|...
+
+### 7.2 后端 routes.js
+- `POST /api/interior/extract`: raw STEP → spawn step_interior_extract.py → 落盘 data/tmp/<stem>.json (越界闸门 STEP_TMP_DIR, 同 /api/exterior/extract 模式) + 进度轮询 `GET /api/interior/extract/progress`
+- 复用现有 `/api/vehicles/save`/`delete` (内镜车型本就走这套) 
+- 提取出的 tmp JSON 可直接喂 `/api/verify` (结构对齐)
+
+### 7.3 前端 app.js + index.html
+- 新增 `wizard-interior-page` (4步, 结构对齐 wizard-exterior):
+  1. 车型名
+  2. 上传整车 STEP → 自动提取 → 预览镜面轮廓 2D + 球面(无,平面镜改显 width/height)+ 眼点/地面/pivot/center 摘要
+  3. 参数确认 (只读展示提取值, 可改? 默认只读, 顺齐外镜轴线可改)
+  4. 保存并校核 → 跳 inner-page
+- `select-inner-btn` new 模式 → wizard-interior; verify 模式 → inner-page (去 alert)
+- 旧 `wizard-inner-page` (分类上传+5点) 加 display:none, 代码保留 (initWizardInner 不删)
+- inner-page 顶栏 `catia-btn` (3DE) 加 display:none (STEP 自动后冗余, 代码保留), 同外镜处理
+- pages + showPage 加 wizard-interior 首次初始化
+
+### 7.4 测试 data/tmp/test_interior_extract.py
+- parse modena STEP (data/tmp/modena-interior.stp)
+- 内存注入命名点: MIRROR_PIVOT=[2883.07,0,1441.017], MIRROR_CENTER_ZERO=[2909.215,0.007,1441.88], GROUND_FRONT=[500,0,193.209], GROUND_REAR=[5900,0,193.209] (验命名点路径)
+- 调 extract_interior → 输出 JSON
+- 对照 modena.json (data/vehicles/modena.json, UTF-8): eye 0mm, pivot 0mm, center_zero 0mm, ground 0mm, 镜面 width/height vs modena, yaw/pitch vs -23.5/5
+- 写 data/tmp/stage7-report.md
+
+## 约束
+1. 禁止改 engine/** (内镜引擎 49 断言不动)。
+2. 提取脚本新写 step_interior_extract.py, 复用 step_topology/step_curve_sampler 公共层。
+3. 后端只改 routes.js; 前端只改 app.js + index.html。
+4. 隐藏不删 (wizard-inner-page, catia-btn 代码保留)。
+5. node -c + npm test 全绿。
+
+## 验收门槛
+- 内存注入测试: eye/pivot/center_zero/ground 0 偏差 vs modena.json; 镜面 width/height 命中 modena (误差<2mm); yaw/pitch 推导出 -23.5/5 (误差<0.5°) 或确认镜片在 STEP 处零位。
+- 输出 JSON → /api/verify → mirrorPass 与 modena 一致 (五线 5/5 PASS)。
+- 仅 STEP 无命名点 → 提示缺哪些, 不崩。
+- npm test 全绿; 旧 wizard-inner 隐藏; inner-page 3DE 按钮隐藏。
+- 后挡风提取: 合成小测通过, 标注待供应商 STEP 实测。
+
+## 执行顺序
+7.1 (提取器) → 7.4 (测试对照 modena) → 7.2 (后端) → 7.3 (前端) → 验收。
