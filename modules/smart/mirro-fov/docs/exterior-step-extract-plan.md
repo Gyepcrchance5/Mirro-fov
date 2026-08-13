@@ -442,3 +442,61 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 
 ## 执行顺序
 9.1 (提取器 inline) → 9.2 (后端 save + loadVehicleJson 合并) → 9.3 (前端 doWizIntSave 重写) → 9.4 验收。
+
+---
+
+# 阶段 10 — 命名中文化 + 统一规范
+
+> 用户决策(2026-08-13): 改用简洁中文命名, 内外镜一套规范, 必要处区分。保留旧名(modena/英文)向后兼容。
+
+## 新命名 (中文) + 别名兼容
+每个参数按别名列表匹配, 命中任一即可。提取器解码 \X2\UTF16BE\X0\ + 容忍裸 UTF-8。
+
+**通用(内外镜)**:
+- 眼点左: [眼点左, EYE_LEFT, 左侧眼椭圆中心点]
+- 眼点右: [眼点右, EYE_RIGHT, 右侧眼椭圆中心点]
+  (内镜额外: 眼椭圆 → eye_center 直接用; 有眼点左/右则中点算 center + 距离算 IPD)
+- 地面前: [地面前, GROUND_FRONT]
+- 地面后: [地面后, GROUND_REAR]
+
+**外镜专属**:
+- 车门左: [车门左, DOOR_OUTER_LEFT]
+- 车门右: [车门右, DOOR_OUTER_RIGHT]
+- 镜体坐标系: AXIS2_PLACEMENT_3D 结构识别 (不变), 可选命名 [镜体左/镜体右]
+- 镜面: SPHERICAL_SURFACE 几何识别 (不变)
+
+**内镜专属**:
+- 球铰: [球铰, MIRROR_PIVOT]
+- 镜心: [镜心, MIRROR_CENTER_ZERO]
+- 镜片面: [镜片, INNER_MIRROR_GLASS] + 兜底 内后视镜镜座总成/最大平面
+- 后挡风面: [后挡风, REAR_WINDOW]
+- 透光区面: [透光区, REAR_WINDOW_TZ]
+
+## 实现
+
+### 10.1 两个提取器 (step_interior_extract.py + step_exterior_extract.py)
+- 新增共享 `decode_step_name(s)`: 解码 \X2\...\X0\ (UTF-16BE) → 中文; 容忍裸 UTF-8 (已是中文直接返回)。
+- find_named_points / find_named_face 改用别名列表匹配: 名字 decode 后, 命中别名列表任一即认。
+- 内镜眼点: 优先 眼点左/眼点右 (中点+IPD); fallback 眼椭圆 (center) + 左/右侧眼椭圆中心点 (IPD)。
+- 保留所有现有启发式兜底 (无命名时)。
+- 外镜提取器补 \X2\ 解码 (内镜已有, 复用)。
+
+### 10.2 三份规范文档更新
+- exterior-step-supplier-spec.md / interior-step-supplier-spec.md / supplier-step-annotation-spec.md
+- 命名表改中文新名 (主), 注明旧名(英文/modena)仍兼容。
+- 自检清单用中文新名。
+
+## 约束
+1. 禁止改 engine/**。
+2. 只改两个提取脚本 + 三份文档 (不改 routes/app/index)。
+3. 旧名兼容: modena STEP (眼椭圆/内后视镜镜座/curb0 ground line) 仍能提取, 不强制重导。
+4. node -c + npm test 全绿。
+
+## 验收门槛
+- modena 内镜 STEP: 眼点(眼椭圆 legacy)命中 0mm, 镜片面(镜座/最大平面)提取, 五线 5/5 PASS (注入 pivot/center_zero 后)。
+- 外镜参数 STEP (data/tmp/axis-test.stp): 轴线 (AXIS2_PLACEMENT_3D) 提取不变, 眼点/地面/车门启发式命中 (该 STEP 无命名点)。
+- 合成测试: 构造含中文新名(眼点左/球铰/镜片等, \X2\编码)的小 STEP → 提取命中。
+- npm test 全绿。
+
+## 执行顺序
+10.1 (提取器别名+\X2\解码) → 10.2 (文档) → 验收 (modena + axis-test + 合成中文)。

@@ -4,13 +4,13 @@
 ==============================================================================
 与外镜 step_exterior_extract.py 平行: 一个 STEP 出全部内镜校核参数, 无需人工选点/3DE。
 
-命名规范见 docs/interior-step-supplier-spec.md (我方定义, 供应商按此提供):
-  ✅ 眼点/IPD    : 命名点 `眼椭圆` + `左侧眼椭圆中心点`/`右侧眼椭圆中心点` (modena 已有)
-  ✅ pivot       : 命名点 `MIRROR_PIVOT` (球铰中心, 必须补)
-  ✅ center_zero : 命名点 `MIRROR_CENTER_ZERO` (镜面零位中心, 必须补)
-  ✅ 地面        : 命名点 `GROUND_FRONT`/`GROUND_REAR` (兜底: `curb0 ground line` 曲线端点)
-  ✅ 镜面轮廓    : 命名面 `INNER_MIRROR_GLASS` (兜底: 镜座区域最大平面, 见 find_glass_face)
-  ✅ 后挡风      : 命名面 `REAR_WINDOW` (外框) + `REAR_WINDOW_TZ` (透光区)
+命名规范见 docs/interior-step-supplier-spec.md (我方定义, 供应商按此提供; 中文新名 + 旧名兼容):
+  ✅ 眼点/IPD    : 命名点 `眼点左`/`眼点右` (中点+IPD); 兜底 `眼椭圆` (modena legacy)
+  ✅ pivot       : 命名点 `球铰` (旧 `MIRROR_PIVOT`, 球铰中心, 必须补)
+  ✅ center_zero : 命名点 `镜心` (旧 `MIRROR_CENTER_ZERO`, 镜面零位中心, 必须补)
+  ✅ 地面        : 命名点 `地面前`/`地面后` (旧 `GROUND_FRONT`/`GROUND_REAR`; 兜底 `curb0 ground line`)
+  ✅ 镜面轮廓    : 命名面 `镜片` (旧 `INNER_MIRROR_GLASS`; 兜底 镜座区域最大平面)
+  ✅ 后挡风      : 命名面 `后挡风` (旧 `REAR_WINDOW`) + `透光区` (旧 `REAR_WINDOW_TZ`)
   ✅ yaw/pitch   : 镜面法向 + pivot/center_zero 几何推导 (对照 modena -23.5/5 已验证)
 
 边界: 缺命名 → stderr 提示哪个缺, 该字段置 null, 不崩。
@@ -34,22 +34,32 @@ try:
 except Exception:
     pass
 
-# ─── 命名点名单 (内镜: 中文眼点 + 英文大写结构点) ─────────────────────
-NAMED_POINT_EYE = '眼椭圆'
-NAMED_POINT_EYE_LEFT = '左侧眼椭圆中心点'
-NAMED_POINT_EYE_RIGHT = '右侧眼椭圆中心点'
-NAMED_POINT_PIVOT = 'MIRROR_PIVOT'
-NAMED_POINT_CENTER_ZERO = 'MIRROR_CENTER_ZERO'
-NAMED_POINT_GROUND_FRONT = 'GROUND_FRONT'
-NAMED_POINT_GROUND_REAR = 'GROUND_REAR'
+# ─── 命名别名 (阶段 10: 简洁中文新名 + 旧名兼容) ─────────────────────
+# 每个参数命中别名列表任一即认; 提取器解码 \X2\UTF16BE\X0\ + 容忍裸 UTF-8。
+# 通用 (内外镜同套): 眼点左/眼点右/地面前/地面后; 内镜额外: 眼椭圆 (eye_center legacy)。
+ALIAS_EYE_LEFT = ['眼点左', 'EYE_LEFT', '左侧眼椭圆中心点']
+ALIAS_EYE_RIGHT = ['眼点右', 'EYE_RIGHT', '右侧眼椭圆中心点']
+ALIAS_EYE_CENTER = ['眼椭圆']  # modena legacy: 眼椭圆 = eye_center 直接用
+ALIAS_GROUND_FRONT = ['地面前', 'GROUND_FRONT']
+ALIAS_GROUND_REAR = ['地面后', 'GROUND_REAR']
+ALIAS_PIVOT = ['球铰', 'MIRROR_PIVOT']
+ALIAS_CENTER_ZERO = ['镜心', 'MIRROR_CENTER_ZERO']
 
-NAMED_FACE_GLASS = 'INNER_MIRROR_GLASS'
-NAMED_FACE_REAR_WINDOW = 'REAR_WINDOW'
-NAMED_FACE_REAR_WINDOW_TZ = 'REAR_WINDOW_TZ'
+ALIAS_FACE_GLASS = ['镜片', 'INNER_MIRROR_GLASS']
+ALIAS_FACE_REAR_WINDOW = ['后挡风', 'REAR_WINDOW']
+ALIAS_FACE_REAR_WINDOW_TZ = ['透光区', 'REAR_WINDOW_TZ']
 
-# 镜片面兜底: 面名含这些关键词 (modena 全车 STEP 无 INNER_MIRROR_GLASS, 但独立镜面 STEP 用 "MS11内镜片")
+# 镜片面兜底: 面名含这些关键词 (modena 全车 STEP 无 镜片/INNER_MIRROR_GLASS, 但独立镜面 STEP 用 "MS11内镜片")
 # 注意: 不含 '内后视镜镜座' — 那是镜座总成 (151 面小面), 不是镜片本身; 镜座仅用于定位镜面区域 (见 mount bbox anchor)
 GLASS_NAME_KEYWORDS = ['内镜片', '镜片', '镜面', 'lens', 'reflect', 'mirror']
+
+
+def decode_step_name(s):
+    """解码 STEP 实体名字符串: \\X2\\UTF16BE hex\\X0\\ → 中文; 无 \\X2\\ (裸 UTF-8) 原样返回。
+
+    复用 step_topology._decode_step_name (阶段 10 共享解码入口)。
+    """
+    return st._decode_step_name(s)
 
 
 def _face_name(args):
@@ -59,7 +69,7 @@ def _face_name(args):
         return ''
     raw = toks[0].strip()
     if len(raw) >= 2 and raw[0] == "'" and raw[-1] == "'":
-        return st._decode_step_name(raw[1:-1]).strip()
+        return decode_step_name(raw[1:-1]).strip()
     return ''
 
 
@@ -72,18 +82,18 @@ def _points_array(points):
 
 
 def find_named_points(entities, points):
-    """按 STEP 实体名找 CARTESIAN_POINT (中文 + 英文命名)。
+    """按 STEP 实体名找 CARTESIAN_POINT (中文新名 + 旧英文/modena 名兼容)。
 
     返回 {canonical_name: np.array([x,y,z] mm)}; 未命名的点不在内 (供兜底/提示)。
     """
     wanted = {
-        NAMED_POINT_EYE: 'eye_center',
-        NAMED_POINT_EYE_LEFT: 'eye_left',
-        NAMED_POINT_EYE_RIGHT: 'eye_right',
-        NAMED_POINT_PIVOT: 'pivot',
-        NAMED_POINT_CENTER_ZERO: 'center_zero',
-        NAMED_POINT_GROUND_FRONT: 'ground_front',
-        NAMED_POINT_GROUND_REAR: 'ground_rear',
+        'eye_center': ALIAS_EYE_CENTER,
+        'eye_left': ALIAS_EYE_LEFT,
+        'eye_right': ALIAS_EYE_RIGHT,
+        'pivot': ALIAS_PIVOT,
+        'center_zero': ALIAS_CENTER_ZERO,
+        'ground_front': ALIAS_GROUND_FRONT,
+        'ground_rear': ALIAS_GROUND_REAR,
     }
     named = {}
     for eid, (t, args) in entities.items():
@@ -95,11 +105,12 @@ def find_named_points(entities, points):
         raw = toks[0].strip()
         if len(raw) < 2 or raw[0] != "'" or raw[-1] != "'":
             continue
-        name = st._decode_step_name(raw[1:-1]).strip()
-        if name in wanted and wanted[name] not in named:
-            p = points.get(eid)
-            if p is not None and len(p) == 3:
-                named[wanted[name]] = p
+        name = decode_step_name(raw[1:-1]).strip()
+        for key, aliases in wanted.items():
+            if name in aliases and key not in named:
+                p = points.get(eid)
+                if p is not None and len(p) == 3:
+                    named[key] = p
     return named
 
 
@@ -172,13 +183,18 @@ def _surface_type(surf_ref, entities):
     return entities[surf_ref][0] if surf_ref in entities else '?'
 
 
-def find_named_face(entities, name):
-    """按面名精确匹配 ADVANCED_FACE, 返回 [(face_eid, bounds_refs)]"""
+def find_named_face(entities, names):
+    """按面名别名列表匹配 ADVANCED_FACE, 返回 [(face_eid, bounds_refs)]。
+
+    names: 单个名字或名字列表 (命中任一即认)。
+    """
+    if isinstance(names, str):
+        names = [names]
     out = []
     for eid, (t, args) in entities.items():
         if t != "ADVANCED_FACE":
             continue
-        if _face_name(args) != name:
+        if _face_name(args) not in names:
             continue
         toks = scs._split_top_level(args)
         if len(toks) < 2:
@@ -191,16 +207,16 @@ def find_glass_face(entities, points, anchor=None):
     """找镜片面, 返回 (face_eid, outline_mm, face_name) 或 (None, None, None)。
 
     优先级:
-      1. 命名面 `INNER_MIRROR_GLASS`
+      1. 命名面 `镜片` (旧 `INNER_MIRROR_GLASS`)
       2. 面名含 内镜片/镜片/镜面/lens/reflect/mirror 的最大面 (独立镜面 STEP 命名 "MS11内镜片")
       3. 兜底: anchor (center_zero/pivot) 附近的最大平面面 (modena 全车 STEP 镜片面未命名, 命名 "Y AXIS")
     """
     # 1. 命名面
-    for fid, bounds in find_named_face(entities, NAMED_FACE_GLASS):
+    for fid, bounds in find_named_face(entities, ALIAS_FACE_GLASS):
         outline = trace_face_outline(fid, bounds, entities, points)
         if outline and len(outline) >= 3:
-            print(f"  ✅ 镜片面: 命名 {NAMED_FACE_GLASS} #{fid}")
-            return fid, outline, NAMED_FACE_GLASS
+            print(f"  ✅ 镜片面: 命名 {ALIAS_FACE_GLASS[0]} #{fid}")
+            return fid, outline, ALIAS_FACE_GLASS[0]
 
     # 2. 关键词面 (取最大)
     cand = []
@@ -343,42 +359,42 @@ def extract_interior(entities, points, step_name="step"):
     missing = []
 
     # ─── 1. 眼点 + IPD ─────────────────────────────────
+    # 优先 眼点左/眼点右 (中点=eye_center, 距离=IPD); fallback 眼椭圆 (eye_center 直接用)
     eye_center = None
     eye_left = named.get('eye_left')
     eye_right = named.get('eye_right')
-    if 'eye_center' in named:
-        eye_center = _pt_to_m(named['eye_center'])
-    elif eye_left is not None and eye_right is not None:
+    if eye_left is not None and eye_right is not None:
         eye_center = _pt_to_m((eye_left + eye_right) / 2.0)
-        print("  ⚠️ 未命名 '眼椭圆', 用左右眼椭圆中心点均值", file=sys.stderr)
-    if 'eye_center' not in named:
-        missing.append("眼椭圆 (eye_center)")
+    elif 'eye_center' in named:
+        eye_center = _pt_to_m(named['eye_center'])
+    if eye_center is None:
+        missing.append("眼点左/眼点右 (或 眼椭圆)")
     ipd = 0.065
     if eye_left is not None and eye_right is not None:
         ipd = round(float(abs(eye_left[1] - eye_right[1])) / 1000.0, 6)
-    elif 'eye_center' in named:
-        missing.append("左右眼椭圆中心点 (IPD 用默认 65mm)")
+    else:
+        missing.append("眼点左/眼点右 (IPD 用默认 65mm)")
 
     # ─── 2. pivot / center_zero ───────────────────────
     pivot = _pt_to_m(named['pivot']) if 'pivot' in named else None
     center_zero = _pt_to_m(named['center_zero']) if 'center_zero' in named else None
     if pivot is None:
-        missing.append("MIRROR_PIVOT")
+        missing.append("球铰 (MIRROR_PIVOT)")
     if center_zero is None:
-        missing.append("MIRROR_CENTER_ZERO")
+        missing.append("镜心 (MIRROR_CENTER_ZERO)")
 
     # ─── 3. 地面 ──────────────────────────────────────
     gf = _pt_to_m(named['ground_front']) if 'ground_front' in named else None
     gr = _pt_to_m(named['ground_rear']) if 'ground_rear' in named else None
     if gf is None or gr is None:
-        print("  ⚠️ 地面点未命名 (GROUND_FRONT/GROUND_REAR), 用 curb0 ground line 曲线端点兜底", file=sys.stderr)
+        print("  ⚠️ 地面点未命名 (地面前/地面后), 用 curb0 ground line 曲线端点兜底", file=sys.stderr)
         gf_mm, gr_mm = find_ground_from_curve(entities, points)
         if gf is None and gf_mm is not None:
             gf = _pt_to_m(gf_mm)
         if gr is None and gr_mm is not None:
             gr = _pt_to_m(gr_mm)
     if gf is None or gr is None:
-        missing.append("GROUND_FRONT/GROUND_REAR (或 curb0 ground line)")
+        missing.append("地面前/地面后 (或 curb0 ground line)")
 
     # ─── 4. 镜片面 (anchor = center_zero/pivot, 均 mm) ──
     anchor = None
@@ -467,13 +483,13 @@ def extract_interior(entities, points, step_name="step"):
                   f"height={height_mm if height_mm is None else round(height_mm, 2)}mm, "
                   f"yaw={yaw if yaw is None else round(yaw, 2)}° pitch={pitch if pitch is None else round(pitch, 2)}°")
     else:
-        missing.append("镜片面 (INNER_MIRROR_GLASS / 内后视镜镜座 区域)")
+        missing.append("镜片 (INNER_MIRROR_GLASS / 内后视镜镜座 区域)")
 
     # ─── 5. 后挡风 ────────────────────────────────────
     print("STEP_PROGRESS|提取后挡风...")
     rw_outline = None
     rw_tz = None
-    rw_faces = find_named_face(entities, NAMED_FACE_REAR_WINDOW)
+    rw_faces = find_named_face(entities, ALIAS_FACE_REAR_WINDOW)
     if rw_faces:
         # 取最大面作外框
         best = None
@@ -486,7 +502,7 @@ def extract_interior(entities, points, step_name="step"):
                     best = (area, ol)
         if best:
             rw_outline = [[round(p[0] / 1000, 6), round(p[1] / 1000, 6), round(p[2] / 1000, 6)] for p in best[1]]
-    tz_faces = find_named_face(entities, NAMED_FACE_REAR_WINDOW_TZ)
+    tz_faces = find_named_face(entities, ALIAS_FACE_REAR_WINDOW_TZ)
     if tz_faces:
         best = None
         for fid, bounds in tz_faces:
@@ -499,7 +515,7 @@ def extract_interior(entities, points, step_name="step"):
         if best:
             rw_tz = [[round(p[0] / 1000, 6), round(p[1] / 1000, 6), round(p[2] / 1000, 6)] for p in best[1]]
     if rw_outline is None:
-        missing.append("REAR_WINDOW (后挡风外框)")
+        missing.append("后挡风 (REAR_WINDOW)")
 
     # ─── 6. 组装 (结构 = modena.json) ─────────────────
     vehicle_name = step_name

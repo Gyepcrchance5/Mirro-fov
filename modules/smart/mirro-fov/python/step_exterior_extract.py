@@ -6,9 +6,9 @@
   ✅ 镜面轮廓 (左右, SPHERICAL_SURFACE + 顶点链式)
   ✅ 球心 + 曲率半径 R (SPHERICAL_SURFACE)
   ✅ 旋转轴 + turret p1 (AXIS2_PLACEMENT_3D, 自动判定 Z×X)
-  ✅ 左右眼点 (命名 EYE_LEFT/RIGHT > 几何泛化)
-  ✅ 地面 (命名 GROUND_FRONT/REAR > 中心线最低点)
-  ✅ 车门最外 Y (命名 DOOR_OUTER_LEFT/RIGHT > |Y| 高百分位)
+  ✅ 左右眼点 (命名 眼点左/眼点右 > EYE_LEFT/RIGHT > 几何泛化)
+  ✅ 地面 (命名 地面前/地面后 > GROUND_FRONT/REAR > 中心线最低点)
+  ✅ 车门最外 Y (命名 车门左/车门右 > DOOR_OUTER_LEFT/RIGHT > |Y| 高百分位)
   命名缺失时回退坐标启发式 (stderr 提示), 轴线缺失时回退默认 [0,1,0]。
 
 用法: python step_exterior_extract.py <step_file> [--output out.json] [--json 现有数据.json]
@@ -193,9 +193,21 @@ def find_ground(points):
 
 
 # ─── 阶段 6: 轴线 + 命名参考点提取 ─────────────────────────────────
+# 阶段 10: 命名中文化 + 别名兼容 (简洁中文新名 + 旧英文名)
+ALIAS_EYE_LEFT = ['眼点左', 'EYE_LEFT', '左侧眼椭圆中心点']
+ALIAS_EYE_RIGHT = ['眼点右', 'EYE_RIGHT', '右侧眼椭圆中心点']
+ALIAS_GROUND_FRONT = ['地面前', 'GROUND_FRONT']
+ALIAS_GROUND_REAR = ['地面后', 'GROUND_REAR']
+ALIAS_DOOR_LEFT = ['车门左', 'DOOR_OUTER_LEFT']
+ALIAS_DOOR_RIGHT = ['车门右', 'DOOR_OUTER_RIGHT']
 
-NAMED_POINT_LIST = ['EYE_LEFT', 'EYE_RIGHT', 'GROUND_FRONT', 'GROUND_REAR',
-                    'DOOR_OUTER_LEFT', 'DOOR_OUTER_RIGHT']
+
+def decode_step_name(s):
+    """解码 STEP 实体名字符串: \\X2\\UTF16BE hex\\X0\\ → 中文; 无 \\X2\\ (裸 UTF-8) 原样返回。
+
+    复用 step_topology._decode_step_name (阶段 10 共享解码入口)。
+    """
+    return st._decode_step_name(s)
 
 
 def _ref_of(tok):
@@ -307,11 +319,19 @@ def find_mirror_frames(entities, points, spheres=None):
 
 
 def find_named_points(entities, points):
-    """按 STEP 实体名找 CARTESIAN_POINT (大小写敏感, 下划线)。
+    """按 STEP 实体名找 CARTESIAN_POINT (中文新名 + 旧英文名兼容)。
 
-    名单: EYE_LEFT, EYE_RIGHT, GROUND_FRONT, GROUND_REAR, DOOR_OUTER_LEFT, DOOR_OUTER_RIGHT。
-    返回 {name: np.array([x,y,z] mm)}; 未命名的点不在内 (供启发式兜底)。
+    名单 (别名列表, 命中任一即认): 眼点左/眼点右, 地面前/地面后, 车门左/车门右。
+    返回 {canonical: np.array([x,y,z] mm)}; 未命名的点不在内 (供启发式兜底)。
     """
+    wanted = {
+        'eye_left': ALIAS_EYE_LEFT,
+        'eye_right': ALIAS_EYE_RIGHT,
+        'ground_front': ALIAS_GROUND_FRONT,
+        'ground_rear': ALIAS_GROUND_REAR,
+        'door_left': ALIAS_DOOR_LEFT,
+        'door_right': ALIAS_DOOR_RIGHT,
+    }
     named = {}
     for eid, (t, args) in entities.items():
         if t != "CARTESIAN_POINT":
@@ -322,11 +342,12 @@ def find_named_points(entities, points):
         raw = toks[0].strip()
         if len(raw) < 2 or raw[0] != "'" or raw[-1] != "'":
             continue
-        name = st._decode_step_name(raw[1:-1])
-        if name in NAMED_POINT_LIST and name not in named:
-            p = points.get(eid)
-            if p is not None:
-                named[name] = p
+        name = decode_step_name(raw[1:-1]).strip()
+        for key, aliases in wanted.items():
+            if name in aliases and key not in named:
+                p = points.get(eid)
+                if p is not None and len(p) == 3:
+                    named[key] = p
     return named
 
 
@@ -420,10 +441,10 @@ def extract_exterior(entities, points, step_name="step", manual=None):
 
     # 车门最外 Y: 命名点 (取 Y 分量) > 几何百分位启发式
     door_left = door_right = None
-    if 'DOOR_OUTER_LEFT' in named:
-        door_left = round(float(named['DOOR_OUTER_LEFT'][1]) / 1000, 6)
-    if 'DOOR_OUTER_RIGHT' in named:
-        door_right = round(float(named['DOOR_OUTER_RIGHT'][1]) / 1000, 6)
+    if 'door_left' in named:
+        door_left = round(float(named['door_left'][1]) / 1000, 6)
+    if 'door_right' in named:
+        door_right = round(float(named['door_right'][1]) / 1000, 6)
     if door_left is None or door_right is None:
         print("  ⚠️ 车门点未命名, 用几何百分位启发式", file=sys.stderr)
         door_left_mm, door_right_mm = find_door_outer_Y(points, spheres)
@@ -434,8 +455,8 @@ def extract_exterior(entities, points, step_name="step", manual=None):
     door = {'door_outer_Y_left': door_left, 'door_outer_Y_right': door_right}
 
     # 眼点: 命名 > 几何启发式 > 硬编码回退
-    eye_l = named.get('EYE_LEFT')
-    eye_r = named.get('EYE_RIGHT')
+    eye_l = named.get('eye_left')
+    eye_r = named.get('eye_right')
     if eye_l is not None and eye_r is not None:
         eye_l = _pt_to_m(eye_l)
         eye_r = _pt_to_m(eye_r)
@@ -455,8 +476,8 @@ def extract_exterior(entities, points, step_name="step", manual=None):
         eye_center = [(eye_l[0]+eye_r[0])/2, (eye_l[1]+eye_r[1])/2, (eye_l[2]+eye_r[2])/2]
 
     # 地面: 命名 > 几何启发式 > 硬编码回退
-    gf = named.get('GROUND_FRONT')
-    gr = named.get('GROUND_REAR')
+    gf = named.get('ground_front')
+    gr = named.get('ground_rear')
     if gf is not None and gr is not None:
         gf = _pt_to_m(gf)
         gr = _pt_to_m(gr)
