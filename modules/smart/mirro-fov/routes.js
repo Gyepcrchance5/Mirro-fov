@@ -25,6 +25,7 @@ const { verifyExteriorBoth, loadExteriorVehicle, scanExteriorVehicles } = requir
 // ─── 车型目录 ───
 const VEHICLES_DIR = path.join(__dirname, 'data', 'vehicles');
 const EXTERIOR_DIR = path.join(__dirname, 'data', 'exterior');
+const STEP_TMP_DIR = path.join(__dirname, 'data', 'tmp');
 const DEFAULT_VEHICLE = path.join(VEHICLES_DIR, 'modena.json');
 const DEFAULT_EXTERIOR = path.join(EXTERIOR_DIR, 'exterior-vehicle-draft.json');
 // Python 3DE 读取脚本根目录 (内嵌在项目内, 自包含)。
@@ -41,6 +42,13 @@ function isDefaultVehicle(p) {
 // 外镜默认车型判定 (大小写不敏感, 同 isDefaultVehicle): exterior-vehicle-draft.json 为默认草稿车型
 function isDefaultExterior(p) {
   return path.resolve(String(p)).toLowerCase() === path.resolve(DEFAULT_EXTERIOR).toLowerCase();
+}
+
+// 外镜可读路径白名单: 正式车型目录 (data/exterior) 或向导提取临时目录 (data/tmp)。
+// 向导把提取结果暂存 tmp 供预览 (轮廓/球面偏差/球心), 保存时才落盘 exterior, 中途放弃不留 orphan 车型。
+function isAllowedExteriorPath(p) {
+  const r = path.resolve(String(p));
+  return r.startsWith(path.resolve(EXTERIOR_DIR)) || r.startsWith(path.resolve(STEP_TMP_DIR));
 }
 
 // 后挡风轮廓显示点数 (与 Python dashboard RW_N 对齐)
@@ -695,10 +703,10 @@ router.get('/api/exterior/vehicles', (req, res) => {
 router.get('/api/exterior/config', (req, res) => {
   try {
     const q = req.query.path || '';
-    // 路径越界校验 (只允许读 exterior 目录内, 防任意 JSON 文件读)
+    // 路径越界校验 (只允许读 exterior 目录 / tmp 提取目录内, 防任意 JSON 文件读)
     const p = q ? path.resolve(String(q)) : '';
-    if (p && !p.startsWith(path.resolve(EXTERIOR_DIR))) {
-      return res.status(400).json({ ok: false, error: '路径越界, 只能读取 exterior 目录' });
+    if (p && !isAllowedExteriorPath(p)) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能读取 exterior/tmp 目录' });
     }
     const raw = loadExteriorVehicle(p || undefined);
     const sum = (m) => ({
@@ -722,12 +730,9 @@ router.post('/api/exterior/verify', jsonParser, (req, res) => {
   try {
     const body = req.body || {};
     const psi = Number.isFinite(body.psi) ? body.psi : 0;
-    // 路径越界校验 (同 /api/exterior/config)
-    if (body.path) {
-      const r = path.resolve(String(body.path));
-      if (!r.startsWith(path.resolve(EXTERIOR_DIR))) {
-        return res.status(400).json({ ok: false, error: '路径越界, 只能读取 exterior 目录' });
-      }
+    // 路径越界校验 (同 /api/exterior/config: exterior 目录 / tmp 提取目录)
+    if (body.path && !isAllowedExteriorPath(body.path)) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能读取 exterior/tmp 目录' });
     }
     const result = verifyExteriorBoth(body.path || '', { psi });
     res.json({ ok: true, ...result });
@@ -834,7 +839,6 @@ router.post('/api/catia/exterior', jsonParser, (req, res) => {
 });
 
 // ---- 新建向导: STEP 上传 + 解析轮廓 (base64 → 临时文件 → spawn Python) ----
-const STEP_TMP_DIR = path.join(__dirname, 'data', 'tmp');
 const STEP_UPLOAD_LIMIT = '100mb';
 // 提取进度 (按文件名轮询): Python 打印 STEP_PROGRESS|xxx → 收集 → 前端轮询显示
 const stepProgress = new Map();
@@ -953,11 +957,11 @@ router.post('/api/exterior/extract', express.raw({ limit: STEP_UPLOAD_LIMIT, typ
     const stepPath = path.join(STEP_TMP_DIR, filename);
     fs.writeFileSync(stepPath, buf);
 
-    // 输出名: <stem>.json, 必须落在 exterior 目录内 (路径越界闸门, 同 /api/catia/exterior)
+    // 输出名: <stem>.json, 落在 tmp 提取目录 (向导中途放弃不留 orphan 车型, 保存时才落盘 exterior)
     const stem = filename.replace(/\.(stp|step)$/i, '');
-    const outPath = path.join(EXTERIOR_DIR, stem + '.json');
-    if (!path.resolve(outPath).startsWith(path.resolve(EXTERIOR_DIR))) {
-      return res.status(400).json({ ok: false, error: '路径越界, 只能写到 exterior 目录' });
+    const outPath = path.join(STEP_TMP_DIR, stem + '.json');
+    if (!path.resolve(outPath).startsWith(path.resolve(STEP_TMP_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能写到 tmp 目录' });
     }
     try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
 

@@ -343,6 +343,129 @@
       </div>
     </div>
 
+    <!-- ═══════ 外后视镜新建向导 ═══════ -->
+    <div id="wizard-exterior-page" style="display:none">
+      <div class="top-bar">
+        <button id="wiz-ext-back" class="btn btn-outline-secondary btn-sm me-2">← 返回</button>
+        <h4 class="top-title mb-0">新建外后视镜车型</h4>
+      </div>
+
+      <div class="center-wrap">
+
+        <!-- Step 0: 基本信息 -->
+        <div class="wizard-step" data-step="0">
+          <div class="step-head"><span class="step-num">1</span>基本信息</div>
+          <div class="wizard-card">
+            <div class="wizard-body">
+              <div class="wizard-field">
+                <label class="wizard-label">车型名称</label>
+                <input id="wiz-ext-name" type="text" class="form-control form-control-sm" placeholder="例如: 新外镜车型A">
+              </div>
+              <div class="wizard-field">
+                <label class="wizard-label">镜子类型</label>
+                <input type="text" class="form-control form-control-sm" value="外后视镜 (III 类)" readonly>
+              </div>
+            </div>
+          </div>
+          <div class="wizard-nav">
+            <button id="wiz-ext-step0-next" class="btn btn-solid">下一步</button>
+          </div>
+        </div>
+
+        <!-- Step 1: 上传整车 STEP → 提取 → 预览左右轮廓 -->
+        <div class="wizard-step" data-step="1" style="display:none">
+          <div class="step-head"><span class="step-num">2</span>上传整车 STEP 并提取</div>
+          <div class="wizard-card">
+            <div class="wizard-body">
+              <div class="wizard-section">
+                <div class="wizard-section-title">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></div>
+                <input id="wiz-ext-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
+                <div class="wizard-actions">
+                  <button id="wiz-ext-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
+                  <span id="wiz-ext-result" class="wizard-result">选择文件后自动提取</span>
+                </div>
+              </div>
+              <div class="wizard-preview" id="wiz-ext-preview" style="display:none">
+                <div class="row g-2">
+                  <div class="col-md-6 col-12">
+                    <div id="wiz-ext-plot-left" style="height:220px"></div>
+                    <div id="wiz-ext-fit-left" class="text-muted" style="font-size:11px"></div>
+                  </div>
+                  <div class="col-md-6 col-12">
+                    <div id="wiz-ext-plot-right" style="height:220px"></div>
+                    <div id="wiz-ext-fit-right" class="text-muted" style="font-size:11px"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="wizard-nav">
+            <button id="wiz-ext-step1-prev" class="btn btn-outline-accent">上一步</button>
+            <button id="wiz-ext-step1-next" class="btn btn-solid">下一步</button>
+          </div>
+        </div>
+
+        <!-- Step 2: 轴线录入 -->
+        <div class="wizard-step" data-step="2" style="display:none">
+          <div class="step-head"><span class="step-num">3</span>轴线录入</div>
+          <div class="wizard-card">
+            <div class="wizard-body">
+              <div class="wizard-actions wizard-actions-head">
+                <button id="wiz-ext-catia-btn" class="btn btn-solid btn-sm">从 3DE 读取</button>
+                <span class="wizard-result">或手动输入旋转轴方向 (整车坐标)</span>
+              </div>
+              <div class="row g-2 wizard-points">
+                <div class="col-md-6 col-12">
+                  <div class="card shadow-sm h-100">
+                    <div class="card-header py-1 px-2"><div class="card-title mb-0">左镜旋转轴方向</div></div>
+                    <div class="card-body py-2 px-2">
+                      <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="wiz-ext-axis-L-x" type="number" step="any" class="form-control form-control-sm" value="0"></div>
+                      <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="wiz-ext-axis-L-y" type="number" step="any" class="form-control form-control-sm" value="1"></div>
+                      <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="wiz-ext-axis-L-z" type="number" step="any" class="form-control form-control-sm" value="0"></div>
+                      <div class="text-muted mt-2" style="font-size:10px" id="wiz-ext-axis-hint-L"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-6 col-12">
+                  <div class="card shadow-sm h-100">
+                    <div class="card-header py-1 px-2"><div class="card-title mb-0">右镜旋转轴方向</div></div>
+                    <div class="card-body py-2 px-2">
+                      <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="wiz-ext-axis-R-x" type="number" step="any" class="form-control form-control-sm" value="0"></div>
+                      <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="wiz-ext-axis-R-y" type="number" step="any" class="form-control form-control-sm" value="1"></div>
+                      <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="wiz-ext-axis-R-z" type="number" step="any" class="form-control form-control-sm" value="0"></div>
+                      <div class="text-muted mt-2" style="font-size:10px" id="wiz-ext-axis-hint-R"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="wizard-nav">
+            <button id="wiz-ext-step2-prev" class="btn btn-outline-accent">上一步</button>
+            <button id="wiz-ext-step2-next" class="btn btn-solid">下一步</button>
+          </div>
+        </div>
+
+        <!-- Step 3: 确认 + 保存并校核 -->
+        <div class="wizard-step" data-step="3" style="display:none">
+          <div class="step-head"><span class="step-num">4</span>保存并校核</div>
+          <div class="wizard-card">
+            <div class="wizard-body">
+              <div class="wizard-field">
+                <label class="wizard-label">确认信息</label>
+                <div id="wiz-ext-summary" class="text-muted" style="font-size:12px;line-height:1.8">提取与轴线录入完成后, 保存为外镜车型并跳转校核页。</div>
+              </div>
+            </div>
+          </div>
+          <div class="wizard-nav">
+            <button id="wiz-ext-step3-prev" class="btn btn-outline-accent">上一步</button>
+            <button id="wiz-ext-save-btn" class="btn btn-solid">保存并校核</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
     <!-- ═══════ 外后视镜页 ═══════ -->
     <div id="exterior-page" style="display:none">
 
@@ -355,8 +478,8 @@
             <span class="input-group-text">车型</span>
             <select id="ext-vehicle-select" class="form-select"></select>
           </div>
-          <button id="ext-catia-btn" class="btn btn-sm me-1 btn-solid" title="外镜 3DE 读取 (Python catia_extract 待扩展)">从3DE读取</button>
-          <button id="ext-upload-btn" class="btn btn-sm me-1 btn-solid" title="上传整车 STEP 一键提取外镜并校核">上传整车STEP</button>
+          <button id="ext-catia-btn" class="btn btn-sm me-1 btn-solid" title="外镜 3DE 读取 (Python catia_extract 待扩展)" style="display:none">从3DE读取</button>
+          <button id="ext-upload-btn" class="btn btn-sm me-1 btn-solid" title="上传整车 STEP 一键提取外镜并校核" style="display:none">上传整车STEP</button>
           <input id="ext-upload-input" type="file" accept=".stp,.step" style="display:none">
           <button id="ext-save-btn" class="btn btn-sm me-1 btn-outline-accent" title="保存当前外镜车型 (含补录的轴线)">保存</button>
           <button id="ext-save-as-btn" class="btn btn-sm me-1 btn-outline-accent" title="另存为新外镜车型 (默认车型保护)">另存为</button>
@@ -559,7 +682,7 @@
 
   </div>
 
-  <script src="app.js?v=20260812o"></script>
+  <script src="app.js?v=20260813"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>

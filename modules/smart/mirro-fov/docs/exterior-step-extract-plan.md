@@ -126,3 +126,83 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 
 **0 → 1 → 2** 先跑通主链路(轴线暂从 draft 沿用 / 留 null),**3** 随后,**4** 视情况。
 每阶段完成后把对照数据(`stage0-report.md` / `stage1-verify.json` 等)留着,供验收。
+
+---
+
+# 阶段 5 — 工作流重构 + 外镜新建向导
+
+> 用户决策(2026-08-13): 完整多步向导 / 预览=2D轮廓+球面偏差+球心 / 轴线手填与3DE并列 / 默认轴允许保存仅警告。
+> 目的: 修复工作流混乱——外镜"上传STEP"是新建动作却挂在"校核已有"页顶栏。
+
+## 现状问题
+
+- 外镜"新建车型"(select-exterior-btn + wizardMode='new')只弹 alert"待实现"然后掉进校核页。
+- "上传整车STEP"按钮(ext-upload-btn)挂在校核页顶栏,与"校核已有"语义冲突。
+- 外镜无轮廓预览(内镜向导有 wiz-mirror-plot 供用户确认提取轮廓)。
+- "从3DE读取"(ext-catia-btn)与"上传整车STEP"并列在校核页,STEP 自动后 3DE 对外镜冗余。
+
+## 目标工作流
+
+- **校核已有车型**: landing「进入校核」→ 外镜 → exterior-page(顶栏仅 保存/另存为/删除;隐藏 ext-upload-btn + ext-catia-btn,代码保留)。
+- **新建车型**: landing「新建车型」→ 外镜 → **wizard-exterior-page**(新,4 步):
+  1. 基本信息(车型名)
+  2. 上传整车 STEP → 提取 → **预览左右镜面轮廓 2D + 球面偏差 + 球心**(用户确认提取对不对)
+  3. 轴线录入(每镜 [x,y,z] 手填输入 + 「从3DE读取」按钮 **并列**;默认 [0,1,0] 橙色警告,允许默认轴保存)
+  4. 保存并校核 → 跳 exterior-page 加载新车型
+
+## 实现细节
+
+### 5.1 后端 routes.js
+- **/api/exterior/extract 输出改到 data/tmp**(不再写 exterior 目录): `outPath = path.join(STEP_TMP_DIR, stem+'.json')`,越界闸门改校验 STEP_TMP_DIR。理由:向导中途放弃不留 orphan 车型;旧 doExtUpload 隐藏流程仍能在 tmp 上 verify。返回 `{ok, path, vehicles: scanExteriorVehicles()}`(vehicles 不含 tmp 文件,正常)。
+- 其余后端不变(/api/exterior/save、/delete、/verify、/config 已就绪)。
+
+### 5.2 前端 index.html
+- 新增 `wizard-exterior-page`(结构对齐 wizard-inner-page):
+  - 顶栏: ← 返回 + 标题"新建外后视镜车型"
+  - Step 0: 车型名 input
+  - Step 1: 文件选择 + 「上传并提取」按钮 + 结果文本 + 预览区(`wiz-ext-plot-left`/`wiz-ext-plot-right` 两个 Plotly div + 球面偏差/球心标注 span)
+  - Step 2: 左右轴线方向 [x,y,z] 输入(默认 [0,1,0]) + hint + 「从3DE读取」按钮(左右共用或各一)
+  - Step 3: 确认信息摘要 + 「保存并校核」按钮
+  - 上一步/下一步按钮同 wizard-inner
+- exterior-page 顶栏: ext-upload-btn + ext-catia-btn 加 `style="display:none"`(隐藏不删)。
+
+### 5.3 前端 app.js
+- `select-exterior-btn` click: wizardMode==='new' → showPage('wizard-exterior'); else → showPage('exterior')。去掉 alert。
+- 新增 `initWizardExterior()`(首次进入调用,绑定按钮/步骤):
+  - 步骤导航: wizardExtNext/Prev(同 wizardInner 模式)
+  - Step 1 上传: `doWizExtUpload()` — 选文件 → POST /api/exterior/extract(raw body, X-Filename) → 成功后:
+    - 存 `wizExtPath = result.path`(tmp 路径)
+    - GET /api/exterior/config?path=wizExtPath 拿 raw + mirrors
+    - GET /api/exterior/verify?path=wizExtPath 拿 viz(outlineUV + fit 球面偏差/球心) — **预览复用 verify 结果**
+    - `renderWizExtPreview()`: 左右两个 Plotly 2D,画 outlineUV 闭合折线 + 标题注 球面偏差(maxDevMm)/球心/点数。风格对齐 wiz-mirror-plot。
+    - 进度轮询 /api/exterior/extract/progress(同 doExtUpload)
+  - Step 2 轴线:
+    - 输入预填 [0,1,0],hint 橙色"使用默认轴,建议补录真轴";手填改值后变灰"已补录真轴"
+    - 「从3DE读取」按钮: POST /api/catia/exterior → 成功后读 result.output 的 config,取 exterior_mirror_left/right.rotation_axis_dir 填入输入框(仅取轴线,不替换其他)。注意 3DE 是交互式(终端选点),按钮期间禁用+提示。
+  - Step 3 保存: `doWizExtSave()`:
+    - 取 step 1 的 raw config(深拷贝),patch 轴线(左右 rotation_axis_dir = 输入值),设 vehicle.name = step 0 车型名
+    - POST /api/exterior/save {name, config} → 落盘 data/exterior/<name>.json
+    - 成功: 若 exterior-page 未初始化则 initExterior;loadExtVehicles;loadExtConfig(result.path);doExtVerify;showPage('exterior')
+- 复用现有 `renderExtMirrorView` 的轮廓绘制逻辑抽取预览版(只画 outline + 标注,不画投影/安全线),或新写轻量 `renderWizExtPreview`。
+
+### 5.4 pages 对象 + showPage
+- pages 加 `'wizard-exterior': $('wizard-exterior-page')`。
+- showPage 加 wizard-exterior 首次初始化分支(同 wizard-inner)。
+
+## 约束(同前)
+1. 禁止改 engine/**。
+2. 后端只改 routes.js(extract 输出路径一行 + 闸门);前端只改 app.js + index.html。
+3. 隐藏不删:ext-upload-btn/ext-catia-btn 加 display:none,doExtUpload/doExtCatia 函数保留。
+4. 完成后 node -c + npm test 全绿。
+
+## 验收门槛
+- landing「新建车型」→ 外镜 → 进 wizard-exterior(不再 alert/掉进校核页)。
+- 上传 waijingjiaohe.stp → 预览显示左右轮廓 2D + 球面偏差 + 球心,用户可目视确认形状。
+- 轴线步:手填真轴 → hint 变灰;点 3DE 按钮(无 CATIA 环境会失败提示,不崩);默认轴保存仅警告不阻止。
+- 保存并校核 → 跳校核页,新车型已加载,左 PASS/右 FAIL。
+- 校核页顶栏不再有"上传整车STEP"/"从3DE读取"按钮(隐藏)。
+- 中途放弃向导:data/exterior 无 orphan(tmp 在 data/tmp,gitignored)。
+- npm test 全绿。
+
+## 产出对照文件
+- `data/tmp/stage5-report.md`:向导各步操作结果 + 预览截图描述 + 保存后校核结论 + 校核页按钮隐藏确认 + npm test。
