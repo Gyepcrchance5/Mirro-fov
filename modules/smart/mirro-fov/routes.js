@@ -119,9 +119,12 @@ function loadVehicleJson(cfgPath) {
   const outline = rw.outline || [];
   const tz = (rw.transparent_zone && rw.transparent_zone.length >= 3) ? rw.transparent_zone : outline;
   const name = (raw.vehicle && raw.vehicle.name) || path.basename(cfgPath, '.json');
-  // 可选: 真实反射区轮廓 (STEP 采样, 同目录 outline_path)
+  // 可选: 真实反射区轮廓 (STEP 采样)
+  // 内镜对齐外镜存储规范: inline outline_local_mm 优先, 旧车 (modena) 回退 outline_path 文件
   let outlineLocal = null;
-  if (m.outline_path) {
+  if (m.outline_local_mm && Array.isArray(m.outline_local_mm) && m.outline_local_mm.length >= 3) {
+    outlineLocal = m.outline_local_mm;
+  } else if (m.outline_path) {
     try {
       const olPath = path.join(path.dirname(cfgPath), m.outline_path);
       const olRaw = JSON.parse(fs.readFileSync(olPath, 'utf8'));
@@ -457,6 +460,10 @@ router.post('/api/verify', jsonParser, (req, res) => {
     const g = body.ground || {};
     const gz = (body.groundZ != null) ? body.groundZ
       : (g.front ? g.front[2] : 0.193209);
+    // 后挡风空轮廓防护: 无 REAR_WINDOW 命名的车型 outline 退化 (pad→去重→1 点),
+    // buildRearWindow 要求 N≥3 会抛错 → 视为无后挡风 (null), 与 loadDefaultConfig 语义一致。
+    const rwIn = body.rearWindow || null;
+    const rearWindow = (rwIn && Array.isArray(rwIn.outline) && rwIn.outline.length >= 3) ? rwIn : null;
     const params = {
       width: body.width, height: body.height,
       pivot: body.pivot, centerZero: body.centerZero, armOffset: body.armOffset,
@@ -465,7 +472,7 @@ router.post('/api/verify', jsonParser, (req, res) => {
       farDist: body.farDist, reqWidth: body.reqWidth,
       yawDeg: body.yawDeg, pitchDeg: body.pitchDeg,
       cornerRadius: body.cornerRadius,
-      rearWindow: body.rearWindow || null,
+      rearWindow,
       outlineLocal: body.outlineLocal || null,
     };
     const result = fullVerify(params);
@@ -575,25 +582,46 @@ router.post('/api/vehicles/save', jsonParser, (req, res) => {
       return res.status(400).json({ ok: false, error: '不能直接覆盖默认车型 (Modena), 请改车型名另存为新文件' });
     }
 
-    const cfg = {
-      vehicle: { name },
-      mirror: {
-        width: body.widthMM / 1000, height: body.heightMM / 1000,
-        pivot: body.pvMM.map(v => v / 1000), center_zero: body.czMM.map(v => v / 1000),
-        yaw: body.yawDeg, pitch: body.pitchDeg,
-        corner_radius: (body.cornerRadiusMM || 0) / 1000,
-      },
-      driver: { eye_center: body.eyeMM.map(v => v / 1000), interpupillary_distance: body.ipdMM / 1000 },
-      ground: { front_mid: body.gfMM.map(v => v / 1000), rear_mid: body.grMM.map(v => v / 1000) },
-      rear_window: {
-        outline: dedupePoints(body.rwMM || []).map(p => p.map(v => v / 1000)),
-        transparent_zone: (body.rwTMM || []).map(p => p.map(v => v / 1000)),
-      },
-      regulation: { standard: 'GB 15084', mirror_class: 'I', far_distance: 60.0, required_width_at_far: 20.0 },
-      visualization: { ground_plane_z: body.groundZ ?? (body.gfMM ? body.gfMM[2] / 1000 : 0) },
-      tolerance: { coverage_y: 0.5, ground_visible_z: 1.0, pitch_convergence: 0.1 },
-    };
-    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf8');
+    // 合并模式: 读现有车型 JSON (path 存在则读, 不存在则 {}), 用 body flat 字段更新
+    // mirror/driver/ground/rear_window, 保留现有 mirror.outline_local_mm / outline_path /
+    // regulation / visualization / tolerance 不丢 (手动编辑不能抹掉 inline 轮廓 / 旧车 outline_path)。
+    let existing = {};
+    if (fs.existsSync(cfgPath)) {
+      try { existing = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); }
+      catch (e) { existing = {}; }
+    }
+    existing.vehicle = existing.vehicle || {};
+    existing.vehicle.name = name;
+    existing.mirror = existing.mirror || {};
+    existing.driver = existing.driver || {};
+    existing.ground = existing.ground || {};
+    existing.rear_window = existing.rear_window || {};
+
+    // mirror flat 更新 (mm→m), 保留 outline_local_mm / outline_path 不动
+    existing.mirror.width = body.widthMM / 1000;
+    existing.mirror.height = body.heightMM / 1000;
+    existing.mirror.pivot = body.pvMM.map(v => v / 1000);
+    existing.mirror.center_zero = body.czMM.map(v => v / 1000);
+    existing.mirror.yaw = body.yawDeg;
+    existing.mirror.pitch = body.pitchDeg;
+    existing.mirror.corner_radius = (body.cornerRadiusMM || 0) / 1000;
+
+    existing.driver.eye_center = body.eyeMM.map(v => v / 1000);
+    existing.driver.interpupillary_distance = body.ipdMM / 1000;
+
+    existing.ground.front_mid = body.gfMM.map(v => v / 1000);
+    existing.ground.rear_mid = body.grMM.map(v => v / 1000);
+
+    existing.rear_window.outline = dedupePoints(body.rwMM || []).map(p => p.map(v => v / 1000));
+    existing.rear_window.transparent_zone = (body.rwTMM || []).map(p => p.map(v => v / 1000));
+    // 保留 rear_window.outline_path 不动 (旧车后挡风轮廓文件)
+
+    // 全新文件补默认 (已有车型保留原 regulation / visualization / tolerance)
+    if (!existing.regulation) existing.regulation = { standard: 'GB 15084', mirror_class: 'I', far_distance: 60.0, required_width_at_far: 20.0 };
+    if (!existing.visualization) existing.visualization = { ground_plane_z: body.groundZ ?? (body.gfMM ? body.gfMM[2] / 1000 : 0) };
+    if (!existing.tolerance) existing.tolerance = { coverage_y: 0.5, ground_visible_z: 1.0, pitch_convergence: 0.1 };
+
+    fs.writeFileSync(cfgPath, JSON.stringify(existing, null, 2), 'utf8');
     res.json({ ok: true, path: cfgPath, vehicles: scanVehicles() });
   } catch (e) {
     res.status(400).json({ ok: false, error: friendlyError(e) });
@@ -1119,6 +1147,36 @@ router.post('/api/interior/extract/retry', jsonParser, (req, res) => {
     success: (result) => res.json({ ok: true, path: outPath, result }),
     failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
   });
+});
+
+// ---- 内后视镜: 保存车型 (单接口原子写, 平行 /api/exterior/save) ----
+// 接收完整内镜 config (含 mirror.outline_local_mm inline 轮廓), 落盘 data/vehicles/<name>.json。
+// 与外镜 /api/exterior/save 对齐: name sanitize + VEHICLES_DIR 越界闸门 + 默认车型保护 + 原子写。
+router.post('/api/interior/save', jsonParser, (req, res) => {
+  try {
+    const body = req.body || {};
+    const config = body.config && typeof body.config === 'object' ? body.config : body;
+    const name = (body.name || (config.vehicle && config.vehicle.name) || '新内镜车型').trim();
+    if (!name) return res.status(400).json({ ok: false, error: '车型名不能为空' });
+    const safe = name.replace(/[\\/:*?"<>|]/g, '_');
+    const cfgPath = body.path || path.join(VEHICLES_DIR, `${safe}.json`);
+    // path 越界校验 (对齐 /api/vehicles/save: 只允许写 vehicles 目录内)
+    const resolved = path.resolve(cfgPath);
+    if (!resolved.startsWith(path.resolve(VEHICLES_DIR))) {
+      return res.status(400).json({ ok: false, error: '路径越界, 只能保存到 vehicles 目录' });
+    }
+    // 默认车型保护: 不允许直接覆盖 modena.json (默认车型), 需另存为新名 (大小写不敏感)
+    if (isDefaultVehicle(resolved) && !body.forceOverwriteDefault) {
+      return res.status(400).json({ ok: false, error: '不能直接覆盖默认车型 (Modena), 请改车型名另存为新文件' });
+    }
+    // 补全 vehicle.name (另存为时以用户输入名覆盖), 确保与文件名一致
+    if (!config.vehicle) config.vehicle = {};
+    config.vehicle.name = name;
+    fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2), 'utf8');
+    res.json({ ok: true, path: cfgPath, vehicles: scanVehicles() });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: friendlyError(e) });
+  }
 });
 
 // ---- 新建向导: 保存提取的轮廓文件 + 设置车型 outline_path ----

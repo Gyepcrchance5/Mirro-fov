@@ -1683,57 +1683,42 @@
     $('wiz-int-summary').innerHTML = wizIntSummaryHtml(r);
   }
 
-  // Step 3: 保存并校核 — 提取 JSON → 扁平字段 → /api/vehicles/save + save-outline → 跳 inner-page
+  // Step 3: 保存并校核 — 深拷贝 wizIntResult (轮廓已 inline), 单接口 POST /api/interior/save → 跳 inner-page。
+  // 对齐 doWizExtSave: 无 modena 硬编码默认值, 关键参数任一 null → 提示缺哪个 + 阻止保存 (不兜底)。
   async function doWizIntSave() {
+    const btn = $('wiz-int-save-btn');
     const name = ($('wiz-int-name').value || '新内镜车型').trim();
     if (!wizIntResult) { alert('请先完成整车 STEP 提取'); return; }
     const r = wizIntResult;
-    const m = r.mirror || {}, d = r.driver || {}, g = r.ground || {}, rw = r.rear_window || {};
-    // 关键参数缺失防护: pivot/center_zero 缺命名时不能兜底 0 (会静默存错数据 → 校核全错)。
-    // modena 等未命名 STEP 走到这里应阻止保存, 提示补命名。
-    if (!m.pivot || !m.center_zero) {
-      alert('提取缺 pivot 或 center_zero (STEP 未含 MIRROR_PIVOT / MIRROR_CENTER_ZERO 命名点), 无法保存校核。\n\n请让供应商按内镜规范补这两个命名点后重试。\n(眼点/镜面轮廓/地面/yaw·pitch 已自动提取, 仅缺球铰与零位中心。)');
+    const m = r.mirror || {}, d = r.driver || {}, g = r.ground || {};
+
+    // 关键参数缺失防护: 任一 null → 提示缺哪个 + 不保存 (不再兜底 224.796/-23.5/5.0 等硬编码默认值)
+    const missing = [];
+    if (m.pivot == null) missing.push('pivot');
+    if (m.center_zero == null) missing.push('center_zero');
+    if (m.width == null) missing.push('width');
+    if (m.height == null) missing.push('height');
+    if (m.yaw == null) missing.push('yaw');
+    if (m.pitch == null) missing.push('pitch');
+    if (d.eye_center == null) missing.push('eye_center');
+    if (g.front_mid == null || g.rear_mid == null) missing.push('ground');
+    if (missing.length) {
+      alert('提取缺关键参数: ' + missing.join(' / ') +
+        '\n\n无法保存校核, 请让供应商按内镜规范补全对应命名后重试。');
       return;
     }
-    const mm = v => (v && v.length >= 3) ? [v[0] * 1000, v[1] * 1000, v[2] * 1000] : [0, 0, 0];
-    // 后挡风默认 4 点占位 (与 modena 一致; 无 REAR_WINDOW 命名时用)
-    const defaultRw = [[4.541629, -0.571227, 1.491361], [5.120844, -0.538903, 1.293511], [5.120844, 0.538903, 1.293511], [4.541629, 0.571227, 1.491361]];
-    const rwOutline = rw.outline && rw.outline.length >= 3 ? rw.outline : defaultRw;
-    const payload = {
-      name,
-      widthMM: m.width != null ? m.width * 1000 : 224.796,
-      heightMM: m.height != null ? m.height * 1000 : 50.794,
-      cornerRadiusMM: (m.corner_radius || 0.01) * 1000,
-      yawDeg: m.yaw != null ? m.yaw : -23.5,
-      pitchDeg: m.pitch != null ? m.pitch : 5.0,
-      pvMM: mm(m.pivot), czMM: mm(m.center_zero),
-      eyeMM: mm(d.eye_center), ipdMM: (d.interpupillary_distance || 0.065) * 1000,
-      gfMM: mm(g.front_mid), grMM: mm(g.rear_mid),
-      rwMM: rwOutline.map(mm),
-      rwTMM: (rw.transparent_zone || []).map(mm),
-      groundZ: g.front_mid ? g.front_mid[2] : ((r.visualization && r.visualization.ground_plane_z) || 0),
-    };
-    const btn = $('wiz-int-save-btn');
+
     btn.disabled = true; btn.textContent = '保存中…';
     try {
-      const resp = await fetch(API_BASE + '/vehicles/save', {
+      const config = JSON.parse(JSON.stringify(wizIntResult));
+      if (!config.vehicle) config.vehicle = {};
+      config.vehicle.name = name;
+      const resp = await fetch(API_BASE + '/interior/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ name, config }),
       });
       const d = await resp.json();
       if (!d.ok) throw new Error(d.error);
-
-      // 保存镜面轮廓 (outline_local_mm → 车型 outline_path)
-      const ol = r._meta && r._meta.outline_local_mm;
-      if (ol && ol.length >= 3) {
-        const safe = name.replace(/[\\/:*?"<>|]/g, '_');
-        const saveResp = await fetch(API_BASE + '/vehicles/save-outline', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vehiclePath: d.path, kind: 'mirror', outlineFile: { source: 'step_interior_extract', outline_local_mm: ol, outline_count: ol.length, unit: 'mm' } }),
-        });
-        const sd = await saveResp.json();
-        if (!sd.ok) throw new Error(sd.error);
-      }
 
       // 跳校核页 (复用 saveNewVehicle 的 DOM 就绪 + 加载逻辑, 避免 initInner 竞态)
       if (!pages.inner.__inited) {

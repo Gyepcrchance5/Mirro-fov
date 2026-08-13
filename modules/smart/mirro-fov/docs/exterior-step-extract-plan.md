@@ -394,3 +394,51 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 
 ## 执行顺序
 8.1(后端流式+JSON错误+动态超时)→ 8.2/8.3(前端XHR+预检+重试)→ 验收(modena 实测)。
+
+---
+
+# 阶段 9 — 内镜存储统一 + save 默认值修复 (parity)
+
+> 目的: 内镜对齐外镜的存储规范 (轮廓 inline + 单接口原子保存), 顺带修 #1 (去掉 modena 硬编码默认值)。旧 modena (outline_path) 向后兼容。
+
+## 现状不一致
+- 外镜: 轮廓 inline (outline_raw), 单接口 /api/exterior/save 原子写, 无默认值。
+- 内镜: 轮廓单独文件 (outline_path), 双接口 (/api/vehicles/save 重建 flat + save-outline), doWizIntSave 有 modena 硬编码默认值 (224.796/-23.5/5.0/0.065/defaultRw) 静默兜底。
+
+## 目标存储 (内镜对齐外镜模式)
+内镜车型 JSON: mirror.outline_local_mm inline (不再用 outline_path 单独文件, 旧车 fallback)。新接口 /api/interior/save 原子写完整 config。字段仍按镜种差异 (yaw/pivot/rear_window 保留, 不与外镜字段强同)。
+
+## 实现
+
+### 9.1 python/step_interior_extract.py
+- 提取输出把 outline_local_mm 写进 `mirror.outline_local_mm` (inline), 不再只放 _meta (可保留 _meta 副本供调试)。
+- 其余结构不变 (mirror/driver/ground/rear_window/regulation/visualization, 米制 snake_case)。
+
+### 9.2 后端 routes.js
+- **新增 /api/interior/save** (平行 /api/exterior/save): 接收 {name, config}, 落盘 data/vehicles/<name>.json。name sanitize + 路径越界闸门 (VEHICLES_DIR) + 默认车型保护 (isDefaultVehicle, 不覆盖 modena)。原子写 (单次 fs.writeFileSync)。
+- **/api/vehicles/save 改合并模式**: 读现有车型 JSON (path 存在则读, 不存在则 {}), 用 body 的 flat 字段更新 mirror/driver/ground/rear_window, **保留现有 mirror.outline_local_mm / outline_path / regulation / visualization 不丢**, 写回。理由: 手动编辑内镜车型时不能丢 inline 轮廓。
+- **loadVehicleJson**: outlineLocal 读取改为 `m.outline_local_mm (inline) 优先, fallback m.outline_path 文件`。向后兼容 modena。
+
+### 9.3 前端 app.js (doWizIntSave 重写, 对齐 doWizExtSave)
+- 去掉所有 modena 硬编码默认值 (224.796/-23.5/5.0/0.065/defaultRw)。
+- 关键参数缺失防护: pivot/center_zero/width/height/yaw/pitch/eye_center/ground 任一 null → alert 提示缺哪个 + return (不保存)。**不再兜底默认值**。
+- 单次 POST /api/interior/save {name, config: wizIntResult} (深拷贝, 设 vehicle.name)。**去掉 save-outline 第二步** (轮廓已 inline)。
+- 成功 → initInnerDOM (若未初始化) + loadVehicles + 选中新车 + showPage('inner') + loadVehicleConfig + doVerify。
+- bump app.js 缓存版本号。
+
+### 9.4 验收
+- 新提取内镜车型: /api/interior/save 保存 → /api/vehicles/config 读回 → mirror.outline_local_mm inline 存在 → doVerify 五线 5/5 PASS (与 modena 基线一致)。
+- 手动编辑: 内镜页改某参数 → /api/vehicles/save (合并模式) → 读回 inline 轮廓仍在, 五线仍 PASS。
+- modena (outline_path 旧格式): loadVehicleConfig 仍能读 (fallback), 五线 PASS; 手动编辑 modena 不丢 outline_path。
+- doWizIntSave: 缺 width (模拟) → 阻止保存 + 提示, 不再用 224.796 兜底。
+- 默认车型保护: /api/interior/save 覆盖 modena → 400 拦截。
+- npm test 全绿; 未改 engine。
+
+## 约束
+1. 禁止改 engine/**。
+2. 后端只改 routes.js; 前端只改 app.js + (step_interior_extract.py)。
+3. 旧 modena.json 不动 (靠 fallback 兼容), 不迁移。
+4. node -c + npm test 全绿。
+
+## 执行顺序
+9.1 (提取器 inline) → 9.2 (后端 save + loadVehicleJson 合并) → 9.3 (前端 doWizIntSave 重写) → 9.4 验收。

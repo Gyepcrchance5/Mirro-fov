@@ -458,6 +458,7 @@ def extract_interior(entities, points, step_name="step"):
             'arm_offset': [round(center_zero[i] - pivot[i], 6) for i in range(3)] if (center_zero and pivot) else None,
             'yaw': round(yaw, 6) if yaw is not None else None,
             'pitch': round(pitch, 6) if pitch is not None else None,
+            'outline_local_mm': outline_local_mm,  # inline 轮廓 (对齐外镜 outline_raw 存储规范, 不再依赖 outline_path 文件)
             'outline_path': None,
         }
         if glass_name:
@@ -518,7 +519,7 @@ def extract_interior(entities, points, step_name="step"):
         'mirror': mirror if mirror else {
             'width': None, 'height': None, 'corner_radius': 0.01,
             'pivot': pivot, 'center_zero': center_zero, 'arm_offset': None,
-            'yaw': None, 'pitch': None, 'outline_path': None,
+            'yaw': None, 'pitch': None, 'outline_local_mm': None, 'outline_path': None,
         },
         'driver': {
             'eye_center': eye_center,
