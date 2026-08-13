@@ -2,13 +2,14 @@
 """
 外镜数据一条龙提取 — 从完整校核 STEP 自动生成外镜数据 JSON
 ========================================================
-从供应商完整外镜校核模型提取:
+从供应商完整外镜校核模型 (一个 STEP) 全自动提取全部 7 类参数:
   ✅ 镜面轮廓 (左右, SPHERICAL_SURFACE + 顶点链式)
-  ✅ 球心 (SPHERICAL_SURFACE)
-  ✅ 左右眼点 (CARTESIAN_POINT 眼点对几何泛化)
-  ✅ 地面 (CARTESIAN_POINT 中心线最低点)
-  ✅ 车门最外 Y (车身侧壁 |Y| 高百分位, 排除镜面)
-  ⚠️ 轴线 — STEP 无此几何 (已证), 输出默认轴 [0,1,0] + 轮廓质心点 (阶段 3 人工补录)
+  ✅ 球心 + 曲率半径 R (SPHERICAL_SURFACE)
+  ✅ 旋转轴 + turret p1 (AXIS2_PLACEMENT_3D, 自动判定 Z×X)
+  ✅ 左右眼点 (命名 EYE_LEFT/RIGHT > 几何泛化)
+  ✅ 地面 (命名 GROUND_FRONT/REAR > 中心线最低点)
+  ✅ 车门最外 Y (命名 DOOR_OUTER_LEFT/RIGHT > |Y| 高百分位)
+  命名缺失时回退坐标启发式 (stderr 提示), 轴线缺失时回退默认 [0,1,0]。
 
 用法: python step_exterior_extract.py <step_file> [--output out.json] [--json 现有数据.json]
   --json: 提供现有数据时, 车门/轴线/SR 等未提取字段沿用现有值 (同车型验证用)
@@ -191,29 +192,164 @@ def find_ground(points):
     return front_m, rear_m
 
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="外镜数据一条龙提取")
-    parser.add_argument("step_file")
-    parser.add_argument("--output", "-o", default=None, help="输出 JSON 路径")
-    parser.add_argument("--json", default=None, help="现有数据 JSON (同车型, 补充未提取字段)")
-    args = parser.parse_args()
+# ─── 阶段 6: 轴线 + 命名参考点提取 ─────────────────────────────────
 
-    print(f"解析 STEP: {args.step_file}")
-    print("STEP_PROGRESS|解析 STEP 文件中...")
-    entities, points = scs.parse_step(args.step_file)
-    print(f"实体: {len(entities)}, 点: {len(points)}")
-    print(f"STEP_PROGRESS|已解析 {len(entities)} 实体, 提取镜面轮廓")
+NAMED_POINT_LIST = ['EYE_LEFT', 'EYE_RIGHT', 'GROUND_FRONT', 'GROUND_REAR',
+                    'DOOR_OUTER_LEFT', 'DOOR_OUTER_RIGHT']
 
-    # 现有数据 (补充未提取字段)
-    manual = None
-    if args.json:
-        manual = json.load(open(args.json, encoding='utf-8'))
 
+def _ref_of(tok):
+    """'#123' → 123; 其它 → None"""
+    m = re.match(r'#(\d+)', tok.strip())
+    return int(m.group(1)) if m else None
+
+
+def _parse_direction(entities, eid):
+    """DIRECTION('', (x,y,z)) → 归一化 3 维向量; 失败返回 None。"""
+    if eid not in entities:
+        return None
+    etype, args = entities[eid]
+    if etype != "DIRECTION":
+        return None
+    for coord_str in reversed(re.findall(r"\(([^()]*)\)", args)):
+        parts = [p.strip() for p in coord_str.split(",")]
+        if len(parts) != 3:
+            continue
+        try:
+            v = np.array([float(parts[0]), float(parts[1]), float(parts[2])])
+        except ValueError:
+            continue
+        n = float(np.linalg.norm(v))
+        if n > 1e-12:
+            return v / n
+    return None
+
+
+def find_mirror_frames(entities, points, spheres=None):
+    """从 AXIS2_PLACEMENT_3D 提取左右镜体坐标系 (turret p1 + 旋转轴)。
+
+    AXIS2_PLACEMENT_3D('name', #location, #axis, #ref_dir)
+      location = CARTESIAN_POINT (turret p1 / 球铰点)
+      axis     = DIRECTION (折叠轴, 接近整车 Z)
+      ref_dir  = DIRECTION (镜面右向参考)
+
+    每个坐标系三正交轴: X=ref_dir, Z=axis, Y=normalize(Z×X) (=旋转轴)。
+    自动判定 (不依赖供应商 Z/X 标注): fold=三轴中 |z| 最大; tilt=剩余两轴中 |y| 最大;
+    right=第三; rotation_axis_dir=tilt。
+
+    筛选 (区分镜体坐标系与 CAD 其它特征坐标系):
+      - 排除放置点在原点 [0,0,0]±1mm 的世界系
+      - 排除放置点落在球心附近 (球面自身 AXIS2_PLACEMENT_3D 在球心, 非 turret p1)
+      - 自检: 折叠轴近竖直 (fold|z|>0.999) 且旋转轴近水平 (tilt|z|<0.05),
+        否则 stderr 警告并跳过 (疑似特征坐标系, 非镜体坐标系)
+
+    返回 {side: {turret_axis_p1[m], rotation_axis_dir, fold_axis_dir}}; 无有效坐标系时 {}。
+    """
+    sphere_centers = [np.array(s['center']) for s in spheres] if spheres else []
+    candidates = []  # (side, frame)
+    for eid, (t, args) in entities.items():
+        if t != "AXIS2_PLACEMENT_3D":
+            continue
+        toks = scs._split_top_level(args)
+        if len(toks) < 4:
+            continue
+        loc_ref = _ref_of(toks[1])
+        axis_ref = _ref_of(toks[2])
+        ref_ref = _ref_of(toks[3])
+        if loc_ref is None or axis_ref is None or ref_ref is None:
+            continue
+        loc = points.get(loc_ref)
+        Z = _parse_direction(entities, axis_ref)
+        X = _parse_direction(entities, ref_ref)
+        if loc is None or Z is None or X is None:
+            continue
+        if np.linalg.norm(loc) < 1.0:  # 排除原点世界系
+            continue
+        if any(np.linalg.norm(loc - c) < 1.0 for c in sphere_centers):  # 排除球心坐标系
+            continue
+        Y = np.cross(Z, X)
+        yn = float(np.linalg.norm(Y))
+        if yn < 1e-12:
+            continue
+        Y = Y / yn
+        axes = {'X': X, 'Y': Y, 'Z': Z}
+        fold_key = max(axes, key=lambda k: abs(axes[k][2]))
+        fold = axes[fold_key]
+        rest = {k: v for k, v in axes.items() if k != fold_key}
+        tilt_key = max(rest, key=lambda k: abs(rest[k][1]))
+        tilt = rest[tilt_key]
+        side = 'right' if loc[1] > 1.0 else ('left' if loc[1] < -1.0 else None)
+        if side is None:  # 放置点 Y≈0, 无法分左右
+            continue
+        # 自检: 折叠轴近竖直 + 旋转轴近水平
+        if abs(fold[2]) <= 0.999 or abs(tilt[2]) >= 0.05:
+            print(f"  ⚠️ 跳过坐标系 #{eid} ({side}): 朝向异常 "
+                  f"(fold|z|={abs(fold[2]):.4f}, tilt|z|={abs(tilt[2]):.4f})", file=sys.stderr)
+            continue
+        frame = {
+            'turret_axis_p1': [round(float(loc[0]) / 1000, 6), round(float(loc[1]) / 1000, 6), round(float(loc[2]) / 1000, 6)],
+            'rotation_axis_dir': [round(float(tilt[0]), 6), round(float(tilt[1]), 6), round(float(tilt[2]), 6)],
+            'fold_axis_dir': [round(float(fold[0]), 6), round(float(fold[1]), 6), round(float(fold[2]), 6)],
+        }
+        candidates.append((side, frame))
+
+    frames = {}
+    for side in ('left', 'right'):
+        c = [f for s, f in candidates if s == side]
+        if not c:
+            continue
+        if len(c) > 1:
+            # 多候选: 选折叠轴最竖直、旋转轴最水平者 (score 越大越好)
+            c.sort(key=lambda f: abs(f['fold_axis_dir'][2]) - abs(f['rotation_axis_dir'][2]), reverse=True)
+            print(f"  ⚠️ {side} 侧 {len(c)} 个候选镜体坐标系, 取折叠轴最竖直者", file=sys.stderr)
+        frames[side] = c[0]
+    return frames
+
+
+def find_named_points(entities, points):
+    """按 STEP 实体名找 CARTESIAN_POINT (大小写敏感, 下划线)。
+
+    名单: EYE_LEFT, EYE_RIGHT, GROUND_FRONT, GROUND_REAR, DOOR_OUTER_LEFT, DOOR_OUTER_RIGHT。
+    返回 {name: np.array([x,y,z] mm)}; 未命名的点不在内 (供启发式兜底)。
+    """
+    named = {}
+    for eid, (t, args) in entities.items():
+        if t != "CARTESIAN_POINT":
+            continue
+        toks = scs._split_top_level(args)
+        if not toks:
+            continue
+        raw = toks[0].strip()
+        if len(raw) < 2 or raw[0] != "'" or raw[-1] != "'":
+            continue
+        name = st._decode_step_name(raw[1:-1])
+        if name in NAMED_POINT_LIST and name not in named:
+            p = points.get(eid)
+            if p is not None:
+                named[name] = p
+    return named
+
+
+def _pt_to_m(p):
+    return [round(float(p[0]) / 1000, 6), round(float(p[1]) / 1000, 6), round(float(p[2]) / 1000, 6)]
+
+
+def extract_exterior(entities, points, step_name="step", manual=None):
+    """核心提取: 从内存 entities/points 全自动提取完整外镜 JSON (一个 STEP 出 7 类参数)。
+
+    manual: 可选现有 JSON (同车型 --json 模式), 仅补充 SR 元数据/regulation/车型名;
+            几何字段 (球心/轮廓/轴线/眼点/地面/车门) 一律从 entities/points 提取。
+    无球面时打印提示并返回 None。
+    """
     spheres = find_spheres(entities, points)
     if not spheres:
-        print("❌ 未找到球面 (SPHERICAL_SURFACE)")
-        return
+        print("❌ 未找到球面镜片面 (SPHERICAL_SURFACE)")
+        return None
+
+    frames = find_mirror_frames(entities, points, spheres)
+    named = find_named_points(entities, points)
+    if not frames:
+        print("  ⚠️ 未找到镜体坐标系 (AXIS2_PLACEMENT_3D), 轴线回退默认 [0,1,0]+轮廓质心", file=sys.stderr)
 
     # 提取每个镜面的轮廓
     mirrors = {}
@@ -238,22 +374,34 @@ def main():
         # 提取结果 (mm → m)
         outline_m = [[round(p[0]/1000, 6), round(p[1]/1000, 6), round(p[2]/1000, 6)] for p in best]
         sphere_center_m = [round(c/1000, 6) for c in s['center']]
-        # 默认轴 (STEP 无轴线几何): 旋转轴 = 整车 Y, 轴过点 = 轮廓质心 (阶段 3 人工补录)
         centroid_m = [round(float(np.mean(best, axis=0)[i])/1000, 6) for i in range(3)]
 
-        # 从现有数据补充 SR/轴线 (同车型 --json 模式)
+        # SR 元数据 (STEP 无此几何, --json 模式沿用现有)
         sr = {'sr_nominal': 1.23, 'sr_tolerance': 0.03}
-        axis = {'turret_axis_p1': centroid_m, 'rotation_axis_dir': [0.0, 1.0, 0.0],
-                'axis_y_point': None, 'axis_z_point': None}
         if manual and f'exterior_mirror_{side}' in manual:
             mm = manual[f'exterior_mirror_{side}']
             sr['sr_nominal'] = mm.get('sr_nominal', sr['sr_nominal'])
             sr['sr_tolerance'] = mm.get('sr_tolerance', sr['sr_tolerance'])
-            if mm.get('turret_axis_p1') is not None:
-                axis['turret_axis_p1'] = mm['turret_axis_p1']
-                axis['rotation_axis_dir'] = mm.get('rotation_axis_dir', axis['rotation_axis_dir'])
-                axis['axis_y_point'] = mm.get('axis_y_point')
-                axis['axis_z_point'] = mm.get('axis_z_point')
+
+        # 轴线: STEP 坐标系 > --json 现有 > 默认 [0,1,0]+质心
+        axis = {'turret_axis_p1': centroid_m, 'rotation_axis_dir': [0.0, 1.0, 0.0],
+                'axis_y_point': None, 'axis_z_point': None}
+        frame = frames.get(side)
+        if frame is not None:
+            axis['turret_axis_p1'] = frame['turret_axis_p1']
+            axis['rotation_axis_dir'] = frame['rotation_axis_dir']
+            # 与 draft 对齐: axis_y_point = p1 + 0.1*rotation, axis_z_point = p1 + 0.1*fold
+            p1 = np.array(frame['turret_axis_p1'])
+            rot = np.array(frame['rotation_axis_dir'])
+            fold = np.array(frame['fold_axis_dir'])
+            axis['axis_y_point'] = [round(float(p1[i] + 0.1 * rot[i]), 6) for i in range(3)]
+            axis['axis_z_point'] = [round(float(p1[i] + 0.1 * fold[i]), 6) for i in range(3)]
+        elif manual and f'exterior_mirror_{side}' in manual and manual[f'exterior_mirror_{side}'].get('turret_axis_p1') is not None:
+            mm = manual[f'exterior_mirror_{side}']
+            axis['turret_axis_p1'] = mm['turret_axis_p1']
+            axis['rotation_axis_dir'] = mm.get('rotation_axis_dir', axis['rotation_axis_dir'])
+            axis['axis_y_point'] = mm.get('axis_y_point')
+            axis['axis_z_point'] = mm.get('axis_z_point')
 
         mirrors[side] = {
             'sr_nominal': sr['sr_nominal'],
@@ -269,64 +417,73 @@ def main():
         }
 
     print("STEP_PROGRESS|提取车门/眼点/地面...")
-    # 车门最外 Y: --json 模式沿用现有 (m); 否则几何泛化 (mm → m, 排除镜面)
-    door_left_mm, door_right_mm = find_door_outer_Y(points, spheres)
+
+    # 车门最外 Y: 命名点 (取 Y 分量) > 几何百分位启发式
     door_left = door_right = None
-    if manual and manual.get('door_panel'):
-        door_left = manual['door_panel'].get('door_outer_Y_left')
-        door_right = manual['door_panel'].get('door_outer_Y_right')
-    if door_left is None and door_left_mm is not None:
-        door_left = round(-door_left_mm / 1000, 6)
-    if door_right is None and door_right_mm is not None:
-        door_right = round(door_right_mm / 1000, 6)
+    if 'DOOR_OUTER_LEFT' in named:
+        door_left = round(float(named['DOOR_OUTER_LEFT'][1]) / 1000, 6)
+    if 'DOOR_OUTER_RIGHT' in named:
+        door_right = round(float(named['DOOR_OUTER_RIGHT'][1]) / 1000, 6)
+    if door_left is None or door_right is None:
+        print("  ⚠️ 车门点未命名, 用几何百分位启发式", file=sys.stderr)
+        door_left_mm, door_right_mm = find_door_outer_Y(points, spheres)
+        if door_left is None and door_left_mm is not None:
+            door_left = round(-door_left_mm / 1000, 6)
+        if door_right is None and door_right_mm is not None:
+            door_right = round(door_right_mm / 1000, 6)
     door = {'door_outer_Y_left': door_left, 'door_outer_Y_right': door_right}
 
-    # 眼点 (泛化 → 硬编码回退)
-    eye_l, eye_r = None, None
-    if manual:
-        eye_l = manual['driver'].get('eye_left_raw')
-        eye_r = manual['driver'].get('eye_right_raw')
-    if not eye_l or not eye_r:
+    # 眼点: 命名 > 几何启发式 > 硬编码回退
+    eye_l = named.get('EYE_LEFT')
+    eye_r = named.get('EYE_RIGHT')
+    if eye_l is not None and eye_r is not None:
+        eye_l = _pt_to_m(eye_l)
+        eye_r = _pt_to_m(eye_r)
+    else:
+        print("  ⚠️ 眼点未命名, 用几何启发式", file=sys.stderr)
         eye_l, eye_r = find_eyes(points)
-    if not eye_l:
-        found, _ = find_point_by_coord(points, [1471, -427.5, 1020])
-        if found is not None:
-            eye_l = [round(found[0]/1000, 6), round(found[1]/1000, 6), round(found[2]/1000, 6)]
-    if not eye_r:
-        found, _ = find_point_by_coord(points, [1471, -362.5, 1020])
-        if found is not None:
-            eye_r = [round(found[0]/1000, 6), round(found[1]/1000, 6), round(found[2]/1000, 6)]
+        if not eye_l:
+            found, _ = find_point_by_coord(points, [1471, -427.5, 1020])
+            if found is not None:
+                eye_l = _pt_to_m(found)
+        if not eye_r:
+            found, _ = find_point_by_coord(points, [1471, -362.5, 1020])
+            if found is not None:
+                eye_r = _pt_to_m(found)
     eye_center = None
     if eye_l and eye_r:
         eye_center = [(eye_l[0]+eye_r[0])/2, (eye_l[1]+eye_r[1])/2, (eye_l[2]+eye_r[2])/2]
 
-    # 地面 (泛化 → 硬编码回退)
-    gf = gr = None
-    if manual:
-        gf = manual['ground'].get('front_mid')
-        gr = manual['ground'].get('rear_mid')
-    if not gf or not gr:
+    # 地面: 命名 > 几何启发式 > 硬编码回退
+    gf = named.get('GROUND_FRONT')
+    gr = named.get('GROUND_REAR')
+    if gf is not None and gr is not None:
+        gf = _pt_to_m(gf)
+        gr = _pt_to_m(gr)
+    else:
+        print("  ⚠️ 地面点未命名, 用几何启发式", file=sys.stderr)
         gf, gr = find_ground(points)
-    if not gf:
-        found, _ = find_point_by_coord(points, [-1942.2, 0, -388.6])
-        if found is not None:
-            gf = [round(found[0]/1000, 6), round(found[1]/1000, 6), round(found[2]/1000, 6)]
-    if not gr:
-        found, _ = find_point_by_coord(points, [4868, 0, -405.2])
-        if found is not None:
-            gr = [round(found[0]/1000, 6), round(found[1]/1000, 6), round(found[2]/1000, 6)]
+        if not gf:
+            found, _ = find_point_by_coord(points, [-1942.2, 0, -388.6])
+            if found is not None:
+                gf = _pt_to_m(found)
+        if not gr:
+            found, _ = find_point_by_coord(points, [4868, 0, -405.2])
+            if found is not None:
+                gr = _pt_to_m(found)
 
     # 组装 (顶层结构 = draft: vehicle/driver/ground/door_panel/exterior_mirror_*/regulation)
     vehicle_name = manual.get('vehicle', {}).get('name') if manual else None
     if not vehicle_name or vehicle_name.startswith('TBD'):
-        vehicle_name = Path(args.step_file).stem
+        vehicle_name = step_name
 
     result = {
         '_meta': {
             'source': 'step_exterior_extract',
-            'step_file': args.step_file,
+            'step_file': step_name,
             'spheres': [{'id': s['id'], 'radius': s['radius'], 'center': s['center']} for s in spheres],
-            'note': '轮廓/球心/眼点/地面/车门 自动提取; 轴线无 STEP 几何, 输出默认轴 [0,1,0]+轮廓质心, 阶段 3 人工补录',
+            'axes_from_step': bool(frames),
+            'note': '轮廓/球心/轴线/眼点/地面/车门 全自动提取 (轴线来自 AXIS2_PLACEMENT_3D, 参考点命名优先+启发式兜底)',
         },
         'vehicle': {'name': vehicle_name},
         'driver': {
@@ -345,15 +502,42 @@ def main():
             'margin_mm': 3.0, 'adjust_deg': 3.0,
         },
     }
+    return result
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="外镜数据一条龙提取")
+    parser.add_argument("step_file")
+    parser.add_argument("--output", "-o", default=None, help="输出 JSON 路径")
+    parser.add_argument("--json", default=None, help="现有数据 JSON (同车型, 补充未提取字段)")
+    args = parser.parse_args()
+
+    print(f"解析 STEP: {args.step_file}")
+    print("STEP_PROGRESS|解析 STEP 文件中...")
+    entities, points = scs.parse_step(args.step_file)
+    print(f"实体: {len(entities)}, 点: {len(points)}")
+    print(f"STEP_PROGRESS|已解析 {len(entities)} 实体, 提取镜面轮廓")
+
+    manual = None
+    if args.json:
+        manual = json.load(open(args.json, encoding='utf-8'))
+
+    result = extract_exterior(entities, points, step_name=Path(args.step_file).stem, manual=manual)
+    if result is None:
+        return
 
     out_path = args.output or str(Path(args.step_file).with_suffix('.exterior.json'))
     print("STEP_PROGRESS|写入输出文件...")
     with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     print(f"\n→ 输出: {out_path}")
-    print(f"  左镜: {len(mirrors.get('left', {}).get('outline_raw', []))} 点, 右镜: {len(mirrors.get('right', {}).get('outline_raw', []))} 点")
-    print(f"  眼点: {eye_l} / {eye_r}, 地面: {gf} / {gr}")
-    print(f"  车门: {door}")
+    lm = result.get('exterior_mirror_left') or {}
+    rm = result.get('exterior_mirror_right') or {}
+    print(f"  左镜: {len(lm.get('outline_raw', []))} 点, 右镜: {len(rm.get('outline_raw', []))} 点")
+    print(f"  眼点: {result['driver']['eye_left_raw']} / {result['driver']['eye_right_raw']}, "
+          f"地面: {result['ground']['front_mid']} / {result['ground']['rear_mid']}")
+    print(f"  车门: {result['door_panel']}")
 
 
 if __name__ == "__main__":

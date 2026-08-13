@@ -206,3 +206,63 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 
 ## 产出对照文件
 - `data/tmp/stage5-report.md`:向导各步操作结果 + 预览截图描述 + 保存后校核结论 + 校核页按钮隐藏确认 + npm test。
+
+---
+
+# 阶段 6 — 合并 STEP 全自动提取 (方案 A)
+
+> 用户决策(2026-08-13): 参考点要求供应商命名 / 轴系自动判定(不依赖供应商Z/X标注习惯) / 现在就实现。
+> 目的: 一个 STEP 全自动出全部 7 类参数, 轴线不再人工补。供应商准则见 docs/exterior-step-supplier-spec.md。
+
+## 已验证 ( probes )
+- 参数 STEP `外后视镜视野分析参数.stp` 含 3 个 AXIS2_PLACEMENT_3D: 1 个世界原点 + 2 个在 turret p1。
+- 旋转轴 = Z×X, 左[-0.38578,0.92258,0.00544]/右[0.54012,0.84157,-0.00546], 与 draft 5 位一致。
+- 自动判定 (不依赖 Z/X 标注): fold=argmax(|z|), tilt=剩余中 argmax(|y|)。对左右镜均判出正确旋转轴。
+- 参数 STEP 还含 27 个点: 眼点/球心/车门/turret p1/地面 全在 (但当前未命名)。
+
+## 实现
+
+### 6.1 python/step_exterior_extract.py 扩展 (核心)
+重构: 核心提取函数改为接收 (entities, points) 而非文件路径, 便于合并测试。
+新增三个提取器:
+1. **find_mirror_frames(entities, points)** — 找 AXIS2_PLACEMENT_3D:
+   - 排除放置点在原点 [0,0,0]±1mm 的世界系
+   - 剩余按放置点 Y 正负分左右
+   - 每个算三正交轴: X=ref_dir, Z=axis, Y=normalize(Z×X)
+   - 自动判定: fold = 三轴中 |z| 最大者; tilt = 剩余两轴中 |y| 最大者; right = 第三
+   - 返回 {side: {turret_axis_p1: 放置点, rotation_axis_dir: tilt, fold_axis_dir: fold}}
+   - 自检: fold |z| 应 >0.9, tilt |z| 应 <0.1, 否则 stderr 警告"镜体坐标系朝向异常"
+2. **find_named_points(entities, points)** — 按 STEP 实体名找 CARTESIAN_POINT:
+   - 名单: EYE_LEFT, EYE_RIGHT, GROUND_FRONT, GROUND_REAR, DOOR_OUTER_LEFT, DOOR_OUTER_RIGHT
+   - 返回 {eye_left, eye_right, ground_front, ground_rear, door_Y_left, door_Y_right}
+   - 命名缺失时回退现有坐标启发式 (眼点Z≈1020等), 并 stderr 提示"未命名, 用启发式"
+3. 球面/轮廓提取保留现有 (find_spheres + extract_outline)。
+4. 组装输出: 轴线用 find_mirror_frames 填 (非默认[0,1,0]); 眼点/地面/车门用命名优先+启发式兜底; 球心/R/轮廓从球面。
+5. 进度行 STEP_PROGRESS|... 不变。
+
+### 6.2 合并测试 (无真实合并 STEP, 用内存合并)
+- 写 data/tmp/test_combined_extract.py:
+  - parse 玻璃 STEP (waijingjiaohe.stp) → entities_g, points_g
+  - parse 参数 STEP (axis-test.stp) → entities_p, points_p
+  - 内存合并: 给参数侧实体 ID 加偏移 (如 +100000), 重映射 args 里所有 #ref, 合并 dict
+  - 调核心提取 (entities, points) → 输出 JSON
+  - 对照 draft: 球心/轮廓/轴线/眼点/地面/车门 逐项差, 写 data/tmp/stage6-report.md
+- 验收: 全部 7 参数命中 draft (球心 0, 轴线 5 位, 眼点/地面/车门 命中), verifyExteriorBoth 左PASS/右FAIL。
+
+### 6.3 前端向导调整
+- 上传 STEP 后, 轴线自动填入 step2 轴线输入框 (若 STEP 含轴线), hint 显示"已从 STEP 自动提取"; 仍可手改/3DE 覆盖。
+- 轴线未提取到 (STEP 无坐标系) 时, 退回默认 [0,1,0] + 橙色警告, 手填/3DE 兜底。
+- 单上传流不变 (方案 A 一个 STEP)。
+
+## 约束
+1. 禁止改 engine/**。提取脚本核心函数重构为接收 entities/points (不改球面/轮廓逻辑, 只拆签名)。
+2. 命名识别大小写敏感, 用下划线 (EYE_LEFT 等)。
+3. 自动判定 + 自检, 不硬编码坐标。
+4. node -c + npm test 全绿。
+
+## 验收门槛
+- 合并内存提取: 7 参数全命中 draft (球心 0.0mm, 轴线 5 位一致, 眼点/地面/车门 命中或误差<5mm)。
+- verifyExteriorBoth(合并输出) → 左 mirrorPass=true / 右 false, 左窗口含 [-0.5,0]。
+- 仅玻璃 STEP (无轴系) → 轴线默认 [0,1,0] + 提示, 不崩。
+- 仅参数 STEP (无球面) → 提示"未找到球面镜片面"。
+- npm test 全绿。

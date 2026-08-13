@@ -1172,21 +1172,24 @@
     return v;
   }
 
-  // 向导轴线补录提示 (默认 [0,1,0] 橙色警告, 手填真轴变灰) — 复用 setExtAxisHint 逻辑, 独立 DOM id
-  function setWizExtAxisHint(side, dir) {
+  // 向导轴线提示 (默认 [0,1,0] 橙色警告; 手填真轴变灰; STEP 自动提取变灰并标注来源)
+  function isWizExtDefaultAxis(dir) {
+    return Array.isArray(dir) && dir.length >= 3
+      && Math.abs(dir[0]) < 1e-6 && Math.abs(dir[1] - 1) < 1e-6 && Math.abs(dir[2]) < 1e-6;
+  }
+  function setWizExtAxisHint(side, dir, label) {
     const el = $('wiz-ext-axis-hint-' + side);
     if (!el) return;
-    const isDefault = Array.isArray(dir) && dir.length >= 3
-      && Math.abs(dir[0]) < 1e-6 && Math.abs(dir[1] - 1) < 1e-6 && Math.abs(dir[2]) < 1e-6;
+    const isDefault = isWizExtDefaultAxis(dir);
     el.style.color = isDefault ? '#ff9f0a' : '#9a9aa0';
     el.textContent = isDefault
       ? '使用默认轴 [0,1,0], 建议补录真轴'
-      : '已补录真轴 [' + dir.map(v => v.toFixed(4)).join(', ') + ']';
+      : (label || '已补录真轴') + ' [' + dir.map(v => v.toFixed(4)).join(', ') + ']';
   }
-  function setWizExtAxisInputs(side, dir) {
+  function setWizExtAxisInputs(side, dir, label) {
     if (!Array.isArray(dir) || dir.length < 3) return;
     ['x', 'y', 'z'].forEach((ax, i) => { const el = $('wiz-ext-axis-' + side + '-' + ax); if (el) el.value = dir[i]; });
-    setWizExtAxisHint(side, dir);
+    setWizExtAxisHint(side, dir, label);
   }
 
   // Step 1: 上传整车 STEP → 提取到 tmp → 读 config(raw) + verify(viz) → 预览左右轮廓/球面偏差/球心
@@ -1221,6 +1224,11 @@
       const cfg = await cfgR.json();
       if (!cfg.ok) throw new Error(cfg.error);
       wizExtRaw = cfg.raw || null;
+      // 轴线自动填入 step2 (若 STEP 含镜体坐标系 AXIS2_PLACEMENT_3D); 未提取到则保留默认 [0,1,0]+橙色警告
+      const axL = cfg.mirrors && cfg.mirrors.left ? cfg.mirrors.left.rotation_axis_dir : null;
+      const axR = cfg.mirrors && cfg.mirrors.right ? cfg.mirrors.right.rotation_axis_dir : null;
+      if (axL && !isWizExtDefaultAxis(axL)) setWizExtAxisInputs('L', axL, '已从 STEP 自动提取');
+      if (axR && !isWizExtDefaultAxis(axR)) setWizExtAxisInputs('R', axR, '已从 STEP 自动提取');
       // verify 结果: viz.mirrors[].outlineUV + left/right.fit (球面偏差/球心)
       const vR = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1246,10 +1254,16 @@
     const mirs = (v.viz && v.viz.mirrors) || [];
     const leftMir = mirs.find(m => m.side === 'left') || mirs[0];
     const rightMir = mirs.find(m => m.side === 'right') || mirs[1];
+    // 关键: 先显示容器再画 — Plotly 在 display:none 的容器里渲染会拿到 0 尺寸 → 图坍缩成一半
+    // (同 commit 942422b 的 Plotly 隐藏渲染 bug)
+    $('wiz-ext-preview').style.display = '';
     const draw = (plotDiv, fitDiv, M, fit, label) => {
       if (!M || !Array.isArray(M.outlineUV) || M.outlineUV.length < 3) { $(fitDiv).textContent = label + ': 无轮廓'; return; }
       const ol = M.outlineUV;
       const xs = ol.map(p => p[0]), ys = ol.map(p => p[1]);
+      const uMin = Math.min(...xs), uMax = Math.max(...xs), vMin = Math.min(...ys), vMax = Math.max(...ys);
+      // 等比例 + 显式 range: 对齐校核页 renderExtMirrorView, 否则 u 跨度>v 跨度时形状被压扁
+      const pad = Math.max(uMax - uMin, vMax - vMin) * 0.15;
       xs.push(xs[0]); ys.push(ys[0]);
       Plotly.newPlot(plotDiv, [{
         x: xs, y: ys, mode: 'lines+markers',
@@ -1257,8 +1271,8 @@
         marker: { size: 3, color: '#0071e3' },
         fill: 'toself', fillcolor: 'rgba(0,113,227,0.08)',
       }], {
-        xaxis: { title: 'u (mm)', gridcolor: '#f0f0f2' },
-        yaxis: { title: 'v (mm)', gridcolor: '#f0f0f2' },
+        xaxis: { title: 'u (mm)', range: [uMin - pad, uMax + pad], scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+        yaxis: { title: 'v (mm)', range: [vMin - pad, vMax + pad], gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
         margin: { l: 50, r: 10, t: 24, b: 40 },
         paper_bgcolor: '#fff', plot_bgcolor: '#fff',
         font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
@@ -1270,7 +1284,6 @@
     };
     draw('wiz-ext-plot-left', 'wiz-ext-fit-left', leftMir, v.left && v.left.fit, '左镜轮廓');
     draw('wiz-ext-plot-right', 'wiz-ext-fit-right', rightMir, v.right && v.right.fit, '右镜轮廓');
-    $('wiz-ext-preview').style.display = '';
   }
 
   // Step 2: 从 3DE 读取轴线方向 (仅取 rotation_axis_dir; 无 CATIA 环境时失败提示不崩)
