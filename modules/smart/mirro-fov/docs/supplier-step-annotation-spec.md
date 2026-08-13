@@ -1,0 +1,103 @@
+# 供应商 STEP 标注规范 (内/外后视镜合并版)
+
+> 目的:供应商按本规范在**一个 STEP 文件**里标注/准备好数据,系统上传后**全自动提取**校核所需全部参数,无需人工选点。
+> 合并自 `exterior-step-supplier-spec.md`(外镜)与 `interior-step-supplier-spec.md`(内镜)。
+> 制定:2026-08-13。坐标系:整车 X+后 / Y+右 / Z+上 / LHD,单位 mm。
+
+## 一、标注类别总览
+
+供应商需在 STEP 里提供 4 类数据。识别方式三种:**几何识别**(靠曲面类型,无需命名)、**结构识别**(靠坐标系实体,无需命名)、**命名识别**(必须赋固定名)。
+
+| 类别 | 外镜(III 类,凸球面) | 内镜(I 类,平面) |
+|---|---|---|
+| ① 镜面几何面 | `SPHERICAL_SURFACE`(几何识别) | `ADVANCED_FACE` 平面(命名 `INNER_MIRROR_GLASS`,或总成 `内后视镜镜座`) |
+| ② 镜体结构 | `AXIS2_PLACEMENT_3D`(结构识别) | 无结构,用命名点替代 |
+| ③ 命名参考点 | 6 个 `CARTESIAN_POINT` | 4+ 个 `CARTESIAN_POINT` |
+| ④ 命名面 | 无 | 2 个 `ADVANCED_FACE`(后挡风) |
+
+## 二、外镜(III 类)标注清单
+
+### ① 镜面几何 — 几何识别,无需命名
+- 左右各 1 个 `SPHERICAL_SURFACE`(凸球面,R≈1260mm)。
+- 系统按球心 Y 正负分左右(左 Y<0,右 Y>0),追踪边界得轮廓,取球心 + R。
+- **供应商只需保证**:镜片面是球面,左右各一。
+
+### ② 镜体坐标系 — 结构识别,建议命名
+- 左右各 1 个 `AXIS2_PLACEMENT_3D`,放置点 = turret p1(旋转中心)。
+- 三轴 = 镜体局部坐标系:Z=折叠轴(≈整车 Z)、X=右向、Y=旋转轴(系统算 Z×X)。
+- 系统排除原点世界系,按放置点 Y 分左右;自动判定 fold/tilt(不依赖供应商 Z/X 标注习惯)。
+- 提取:turret_axis_p1(放置点)、rotation_axis_dir(Z×X 自动判定)。
+- 建议命名 `MIRROR_FRAME_LEFT`/`MIRROR_FRAME_RIGHT`(可不命名)。
+
+### ③ 命名参考点 — 必须命名
+6 个 `CARTESIAN_POINT`,固定名(大小写敏感,下划线):
+
+| 点名 | 含义 |
+|---|---|
+| `EYE_LEFT` | 左眼点 |
+| `EYE_RIGHT` | 右眼点 |
+| `GROUND_FRONT` | 地面参考线前端中点 |
+| `GROUND_REAR` | 地面参考线后端中点 |
+| `DOOR_OUTER_LEFT` | 左车门**蒙皮主面**最外点(取 Y) |
+| `DOOR_OUTER_RIGHT` | 右车门**蒙皮主面**最外点(取 Y) |
+
+> 车门最外点口径已确认:车门蒙皮主面(非车身包络/含凸出)。参考实测:左 [558.585,-1005.238,397.951] / 右 [558.585,1005.238,397.951]。
+
+## 三、内镜(I 类)标注清单
+
+### ① 镜面几何面 — 命名识别(平面无几何唯一性)
+- 镜片面命名 `INNER_MIRROR_GLASS`(`ADVANCED_FACE`,平面)。
+- 兜底:若未命名,系统在 `内后视镜镜座` 总成内或 pivot/center_zero 附近 200mm 找最大平面。
+- 提取:镜面轮廓 → width/height/corner_radius;镜面法向 → yaw/pitch。
+- **供应商需保证**:镜片面是平面,且命名(或属 `内后视镜镜座` 总成)。
+
+### ② 镜体结构 — 无(用命名点替代)
+内镜是 yaw/pitch 双角调节,无单一旋转轴结构;pivot/center_zero 用命名点提供。
+
+### ③ 命名参考点 — 必须命名
+| 点名 | 含义 |
+|---|---|
+| `MIRROR_PIVOT` | 镜片球铰中心(pivot) |
+| `MIRROR_CENTER_ZERO` | 镜面 yaw=pitch=0 时的中心点 |
+| `眼椭圆` | 眼中心(modena 已有命名习惯,沿用) |
+| `左侧眼椭圆中心点` / `右侧眼椭圆中心点` | 左/右眼(modena 已有,→ IPD) |
+| `GROUND_FRONT` | 地面前端(或用 `curb0 ground line` 曲线兜底) |
+| `GROUND_REAR` | 地面后端(或曲线兜底) |
+
+### ④ 命名面 — 后挡风,必须命名
+| 面名 | 含义 |
+|---|---|
+| `REAR_WINDOW` | 后挡风 CAS 外框面 → 7 点轮廓 |
+| `REAR_WINDOW_TZ` | 后挡风透光区面/曲线 → 4 点透光区 |
+
+## 四、对比要点
+
+| | 外镜 | 内镜 |
+|---|---|---|
+| 镜面识别 | 球面几何唯一(易) | 平面需命名(平面无唯一性) |
+| 关键结构参数 | 旋转轴(AXIS2_PLACEMENT_3D 结构) | pivot/center_zero(命名点,无结构) |
+| 调节参数 | ψ 单轴 | yaw/pitch 双角(法向推导) |
+| 后挡风 | 不需要 | 需要(2 命名面) |
+| 车门最外 | 需要(2 命名点) | 不需要 |
+| 命名点数 | 6 | 4+(眼点可沿用中文命名) |
+| 命名面数 | 0 | 3(镜片 + 后挡风外框 + 透光区) |
+
+## 五、供应商自检清单
+
+**外镜 STEP**:
+- [ ] 2 个 `SPHERICAL_SURFACE`(左右镜片面)
+- [ ] 2 个 `AXIS2_PLACEMENT_3D` 放 turret p1(Z≈整车 Z)
+- [ ] 6 命名点:`EYE_LEFT` `EYE_RIGHT` `GROUND_FRONT` `GROUND_REAR` `DOOR_OUTER_LEFT` `DOOR_OUTER_RIGHT`
+
+**内镜 STEP**:
+- [ ] 镜片面命名 `INNER_MIRROR_GLASS`(或属 `内后视镜镜座` 总成)
+- [ ] 命名点:`MIRROR_PIVOT` `MIRROR_CENTER_ZERO` `眼椭圆` `左/右侧眼椭圆中心点` `GROUND_FRONT` `GROUND_REAR`
+- [ ] 命名面:`REAR_WINDOW` `REAR_WINDOW_TZ`
+
+满足以上,系统上传该 STEP 即可全自动提取全部校核参数,无需任何人工输入。
+
+## 六、命名规则
+
+- STEP 实体名(实体第一个参数,单引号字符串),大小写敏感,下划线分隔。
+- 外镜点名用英文(`EYE_LEFT` 等);内镜眼点沿用 modena 中文命名(`眼椭圆` 等),其余用英文。
+- 命名缺失时:外镜眼点/地面/车门、内镜眼点/地面有启发式兜底(仅适用本车型,不可靠);内镜 pivot/center_zero/后挡风无兜底,缺则该项为空、保存被阻止。
