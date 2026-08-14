@@ -1898,10 +1898,11 @@
     const btn = $('ext-verify-btn');
     btn.disabled = true; btn.textContent = '校核中…'; $('ext-status').textContent = '';
     const psi = parseFloat($('ext-psi').value) || 0;
+    const theta = parseFloat($('ext-theta').value) || 0;
     try {
       const r = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: extCurrentPath || '', psi }),
+        body: JSON.stringify({ path: extCurrentPath || '', psi, theta }),
       });
       const d = await r.json();
       if (!d.ok) throw new Error(d.error);
@@ -1928,16 +1929,19 @@
         $('ext-auto-status').textContent = '±3° 内无两镜都过的角度';
         return;
       }
-      // 应用最佳 ψ, 回填输入框, 重新校核渲染
-      $('ext-psi').value = cs.bestPsi;
+      // 应用最佳 ψ/θ, 回填输入框, 重新校核渲染
+      const bestPsi = cs.bestPsi ?? 0;
+      const bestTheta = cs.bestTheta ?? 0;
+      $('ext-psi').value = bestPsi;
+      $('ext-theta').value = bestTheta;
       const r1 = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: extCurrentPath || '', psi: cs.bestPsi }),
+        body: JSON.stringify({ path: extCurrentPath || '', psi: bestPsi, theta: bestTheta }),
       });
       const d1 = await r1.json();
       if (!d1.ok) throw new Error(d1.error);
       renderExtVerdict(d1); renderExtPlot(d1.viz);
-      $('ext-auto-status').textContent = `已应用 ψ=${cs.bestPsi}° (窗口 [${cs.window.join(', ')}]°)`;
+      $('ext-auto-status').textContent = `已应用 ψ=${bestPsi}° θ=${bestTheta}° (窗口 [${cs.window.join(', ')}]°)`;
     } catch (e) { $('ext-auto-status').textContent = '搜索失败: ' + e.message; }
     finally { btn.disabled = false; btn.textContent = '自动搜角'; }
   }
@@ -1950,7 +1954,7 @@
       b.className = 'verdict-badge ' + (r.mirrorPass ? 'badge-pass' : 'badge-fail');
     };
     side('left', d.left); side('right', d.right);
-    $('ext-verdict-detail').textContent = `ψ=${d.psi != null ? d.psi : 0}° · ${d.left.mirrorPass && d.right.mirrorPass ? '两镜均通过' : (d.left.search.found || d.right.search.found ? '±3° 内有解' : '±3° 内无解')}`;
+    $('ext-verdict-detail').textContent = `ψ=${d.psi != null ? d.psi : 0}° θ=${d.theta != null ? d.theta : 0}° · ${d.left.mirrorPass && d.right.mirrorPass ? '两镜均通过' : (d.left.search.found || d.right.search.found ? '±3° 内有解' : '±3° 内无解')}`;
 
     // 简洁判定: 每镜一行, 说明近/远场是否满足 + 最小安全距离
     const zoneLine = (label, r) => {

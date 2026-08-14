@@ -72,7 +72,7 @@ function raysFromEdge(eye, tri, n, mirror) {
 
 /** 单镜校核 (内部) */
 function verifyOne(side, raw, opts = {}) {
-  const { psi = 0, samplePerEdge = 20, minMarginMm = 3.0 } = opts;
+  const { psi = 0, theta = 0, samplePerEdge = 20, minMarginMm = 3.0 } = opts;
   const mir = raw[`exterior_mirror_${side}`];
   const eyeCenter = raw.driver.eye_center;
   const eyes = { left: raw.driver.eye_left_raw, right: raw.driver.eye_right_raw };
@@ -85,7 +85,7 @@ function verifyOne(side, raw, opts = {}) {
   const gate = validateOutlineOnSphere(mir.outline_raw, fit.center, mir.sr_fit);
   const projOutline = projectToSphere(mir.outline_raw, fit.center, mir.sr_fit);
   let mirror = new ExteriorMirror({ radius: mir.sr_fit, sphereCenter: fit.center, outline: projOutline, turretAxisPoint: mir.turret_axis_p1, turretAxisDir: mir.rotation_axis_dir, foldAxisDir: mir.fold_axis_dir });
-  if (psi) mirror = mirror.rotated(psi);
+  if (psi || theta) mirror = mirror.rotated2D(psi, theta);
 
   const v = verifyExterior(eyes, doorOuterY, ground, mirror, { samplePerEdge, minMarginMm, regulation });
   const tris = buildTriangles(eyeCenter, doorOuterY, ground, mirror, regulation);
@@ -206,6 +206,7 @@ function verifyExteriorBoth(p, opts = {}) {
     path: p || path.join(EXTERIOR_DIR, 'exterior-vehicle-draft.json'),
     vehicle: raw.vehicle,
     psi: opts.psi || 0,
+    theta: opts.theta || 0,
     left: summary(L),
     right: summary(R),
     commonSearch,

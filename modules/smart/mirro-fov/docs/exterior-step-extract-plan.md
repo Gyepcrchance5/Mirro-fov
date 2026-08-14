@@ -556,3 +556,48 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 
 ## 执行顺序
 11.1 (提取器 fold_axis_dir) → 11.2 (引擎 rotated2D + 二维搜索) → 11.3 (api-verify 传参) → 11.4 (draft 字段) → 11.5 (测试) → 验证左右镜结论。
+
+---
+
+# 阶段 12 — 外镜自动搜角二维化 (应用 psi + theta)
+
+> stage 11 收尾: 引擎二维搜索已返回 bestPsi+bestTheta, 但应用层仍是单 psi (verifyOne 只 rotated(psi), 前端只有一个 ψ 输入框, doExtAuto 只回填 ψ)。打通二维应用。
+
+## 现状 (已确认)
+- api-verify.js verifyOne(88行): `if (psi) mirror = mirror.rotated(psi)` 单轴应用; opts 只解构 psi。
+- routes.js /api/exterior/verify(760): 只读 body.psi。
+- 前端: index.html 只有 ext-psi 输入框; doExtVerify 只读 psi; doExtAuto 只回填 bestPsi。
+
+## 实现
+
+### 12.1 api-verify.js
+- verifyOne 解构加 `theta = 0`; `if (psi || theta) mirror = mirror.rotated2D(psi, theta)` (theta 缺省 0 → rotated2D(psi,0) ≈ rotated(psi), 向后兼容)。
+- verifyExteriorBoth 透传 opts (已透传)。
+
+### 12.2 routes.js /api/exterior/verify
+- 读 `body.theta` (Number.isFinite ? : 0), 传 verifyExteriorBoth({ psi, theta })。
+
+### 12.3 index.html (外镜"调节角度"卡, ~616 行)
+- 加 theta 输入框 ext-theta, 与 ext-psi 并列:
+  - ψ 上下 (绕上下调节轴, title 说明) · θ 左右 (绕左右调节轴)
+  - step 0.5, min -3, max 3, value 0
+
+### 12.4 app.js
+- doExtVerify: 读 ext-psi + ext-theta, verify 传 {psi, theta}。
+- doExtAuto: commonSearch 的 bestPsi + bestTheta 都回填到输入框, 重新 verify 传两个; 状态文本显示 `已应用 ψ=..° θ=..°`。
+- renderExtVerdict 的搜索窗口显示 (如有) 可含 theta, 不强求。
+
+## 约束
+1. 引擎 exterior-mirror.js 不动 (rotated2D 已就绪)。
+2. theta 缺省 0 完全向后兼容。
+3. 只改 api-verify.js + routes.js + app.js + index.html。
+
+## 验收
+- 后端: /api/exterior/verify 传 {psi:-1, theta:-2} vs {psi:-1} (theta=0), 左镜结果不同 (theta 生效); 缺 theta 时行为与改前一致。
+- 前端: 两个输入框; doExtVerify 读两个; doExtAuto 回填 bestPsi+bestTheta 并重新 verify。
+- 当前 draft 右镜 FAIL → commonSearch.found=false → doExtAuto 显示"无两镜都过的角度" (逻辑正确, 不崩)。
+- 左镜手动设 psi=-1/theta=-2 → verify PASS。
+- npm test 166 断言全绿。
+
+## 执行顺序
+12.1 → 12.2 → 12.3 → 12.4 → 验收。
