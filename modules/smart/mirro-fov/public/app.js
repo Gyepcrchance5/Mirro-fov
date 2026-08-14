@@ -1094,7 +1094,7 @@
     const ys = outline.map(p => is2D ? p[1] : p[2]);
     xs.push(xs[0]); ys.push(ys[0]);
     $(previewDiv).style.display = '';
-    Plotly.newPlot(plotDiv, [{
+    Plotly.react(plotDiv, [{
       x: xs, y: ys, mode: 'lines+markers',
       line: { color: '#0071e3', width: 2 },
       marker: { size: 3, color: '#0071e3' },
@@ -1421,7 +1421,7 @@
       // 等比例 + 显式 range: 对齐校核页 renderExtMirrorView, 否则 u 跨度>v 跨度时形状被压扁
       const pad = Math.max(uMax - uMin, vMax - vMin) * 0.15;
       xs.push(xs[0]); ys.push(ys[0]);
-      Plotly.newPlot(plotDiv, [{
+      Plotly.react(plotDiv, [{
         x: xs, y: ys, mode: 'lines+markers',
         line: { color: '#0071e3', width: 2 },
         marker: { size: 3, color: '#0071e3' },
@@ -1667,7 +1667,7 @@
     const uMin = Math.min(...xs), uMax = Math.max(...xs), vMin = Math.min(...ys), vMax = Math.max(...ys);
     const pad = Math.max(uMax - uMin, vMax - vMin) * 0.15;
     xs.push(xs[0]); ys.push(ys[0]);
-    Plotly.newPlot('wiz-int-plot', [{
+    Plotly.react('wiz-int-plot', [{
       x: xs, y: ys, mode: 'lines+markers',
       line: { color: '#0071e3', width: 2 },
       marker: { size: 3, color: '#0071e3' },
@@ -2049,7 +2049,7 @@
       annotations: [Object.assign({ text: pass ? '<b>PASS</b>' : '<b>FAIL</b>' }, badge)],
       legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
-    Plotly.newPlot(divId, traces, layout, { responsive: true });
+    Plotly.react(divId, traces, layout, { responsive: true });
   }
 
   function renderExtPlot(viz) {
