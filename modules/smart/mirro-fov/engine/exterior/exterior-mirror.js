@@ -36,9 +36,10 @@ class ExteriorMirror {
    * @param {number[]} opts.sphereCenter - 球心 (整车坐标, m; 凸球球心在镜面后方 R 处)
    * @param {number[][]} opts.outline - 反射面边界点 (N≥4, 在球面上, 整车坐标 m; CATIA 手动标)
    * @param {number[]} opts.turretAxisPoint - 转向器轴线过点 (整车坐标 m)
-   * @param {number[]} opts.turretAxisDir - 转向器轴线方向 (整车坐标, 大致沿 Z)
+   * @param {number[]} opts.turretAxisDir - 转向器轴线方向 (上下调节轴, rotation_axis_dir)
+   * @param {number[]} [opts.foldAxisDir] - 折叠轴方向 (左右调节轴, fold_axis_dir; 缺省 null → 单轴向后兼容)
    */
-  constructor({ radius, sphereCenter, outline, turretAxisPoint, turretAxisDir }) {
+  constructor({ radius, sphereCenter, outline, turretAxisPoint, turretAxisDir, foldAxisDir }) {
     const fin = v => Array.isArray(v) && v.length >= 3 && v.every(Number.isFinite);
     if (!Number.isFinite(radius) || radius <= 0) throw new Error(`球面半径必须为正有限数: ${radius}`);
     if (!fin(sphereCenter)) throw new Error('sphereCenter 非法');
@@ -50,6 +51,8 @@ class ExteriorMirror {
     this.outline = outline.map(p => p.slice());
     this.turretAxisPoint = turretAxisPoint.slice();
     this.turretAxisDir = vec3Normalize(turretAxisDir);
+    // 折叠轴 (左右调节轴): 缺省 null → 完全退化为单轴 (rotated2D 退化为 rotated, 向后兼容)
+    this.foldAxisDir = (foldAxisDir && fin(foldAxisDir) && vec3Norm(foldAxisDir) > 1e-12) ? vec3Normalize(foldAxisDir) : null;
 
     // 派生: 帽面中心 = C + R·normalize(mean(outline) − C)
     const mean = [0, 0, 0];
@@ -136,6 +139,37 @@ class ExteriorMirror {
       outline: this.outline.map(p => r(p)),
       turretAxisPoint: r(this.turretAxisPoint),
       turretAxisDir: this.turretAxisDir, // 轴线是物理基准, 旋转后不变
+      foldAxisDir: this.foldAxisDir,
+    });
+  }
+
+  /**
+   * 二维调节: 先绕转向器轴 (turretAxisDir, 上下) 转 psiDeg, 再绕折叠轴 (foldAxisDir, 左右) 转 thetaDeg。
+   * 两轴共用原点 turretAxisPoint (物理基准, 不随旋转变)。
+   * foldAxisDir 为 null 或 theta=0 时退化为 rotated(psiDeg) (单轴向后兼容)。
+   * @returns {ExteriorMirror} 新实例 (不原地改)
+   */
+  rotated2D(psiDeg, thetaDeg) {
+    if (!Number.isFinite(psiDeg)) psiDeg = 0;
+    // 退化: 无折叠轴 / theta 非有限 / theta=0 → 单轴
+    if (!this.foldAxisDir || !Number.isFinite(thetaDeg) || thetaDeg === 0) {
+      return this.rotated(psiDeg);
+    }
+    const psi = psiDeg * DEG;
+    const theta = thetaDeg * DEG;
+    const rPsi = (p) => rotatePointAroundAxis(p, this.turretAxisPoint, this.turretAxisDir, psi);
+    const rTheta = (p) => rotatePointAroundAxis(p, this.turretAxisPoint, this.foldAxisDir, theta);
+    const compose = (p) => { const a = rPsi(p); return a === null ? null : rTheta(a); };
+    const c = compose(this.sphereCenter);
+    const o = this.outline.map(p => compose(p));
+    if (c === null || o.some(p => p === null)) return this.rotated(psiDeg);
+    return new ExteriorMirror({
+      radius: this.radius,
+      sphereCenter: c,
+      outline: o,
+      turretAxisPoint: this.turretAxisPoint, // 轴共用原点, 绕自身轴不变
+      turretAxisDir: this.turretAxisDir,     // 轴线是物理基准, 旋转后不变
+      foldAxisDir: this.foldAxisDir,
     });
   }
 }
@@ -359,21 +393,38 @@ function verifyExterior(eye, doorOuterY, ground, mirror, opts = {}) {
 }
 
 /**
- * ±3° 调节搜索: 绕转向器轴线网格扫描, 找使 mirrorPass 的角度
- * @returns {{found:boolean, bestPsi:number|null, results:Object[]}}
+ * ±3° 调节搜索: 绕转向器轴线网格扫描, 找使 mirrorPass 的角度。
+ * 若 mirrorBase 有折叠轴 (foldAxisDir), 做二维搜索 (psi×theta 各 [-3,3] 步 0.5, 13×13=169 档);
+ * 否则退化为单轴 psi 搜索 (向后兼容)。
+ * @returns {{found:boolean, bestPsi:number|null, bestTheta:number|null, results:Object[]}}
  */
 function searchExteriorAngles(eye, doorOuterY, ground, mirrorBase, opts = {}) {
   const { step = 0.5, range = 3.0, regulation = {} } = opts;
   const results = [];
-  let found = false, bestPsi = null;
-  for (let psi = -range; psi <= range + 1e-9; psi += step) {
-    const m = psi === 0 ? mirrorBase : mirrorBase.rotated(psi);
+  let found = false, bestPsi = null, bestTheta = null;
+  const push = (m, psi, theta) => {
     const v = verifyExterior(eye, doorOuterY, ground, m, { regulation });
     const r = { psi: Math.round(psi * 100) / 100, mirrorPass: v.mirrorPass, near: v.near.pass, far: v.far.pass };
+    if (theta !== undefined && theta !== null) r.theta = Math.round(theta * 100) / 100;
     results.push(r);
-    if (v.mirrorPass && !found) { found = true; bestPsi = r.psi; }
+    if (v.mirrorPass && !found) { found = true; bestPsi = r.psi; bestTheta = r.theta ?? null; }
+  };
+  if (mirrorBase.foldAxisDir) {
+    // 二维: psi (上下) × theta (左右) 各 ±range, 步 step
+    for (let psi = -range; psi <= range + 1e-9; psi += step) {
+      for (let theta = -range; theta <= range + 1e-9; theta += step) {
+        const m = (psi === 0 && theta === 0) ? mirrorBase : mirrorBase.rotated2D(psi, theta);
+        push(m, psi, theta);
+      }
+    }
+  } else {
+    // 单轴退化 (向后兼容): 结果项无 theta 字段
+    for (let psi = -range; psi <= range + 1e-9; psi += step) {
+      const m = psi === 0 ? mirrorBase : mirrorBase.rotated(psi);
+      push(m, psi, undefined);
+    }
   }
-  return { found, bestPsi, results };
+  return { found, bestPsi, bestTheta, results };
 }
 
 module.exports = {

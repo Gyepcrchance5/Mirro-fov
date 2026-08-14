@@ -122,6 +122,26 @@ assert(approx(m90.sphereCenter[0], 2.95, 1e-6) && approx(m90.sphereCenter[1], -0
 assert(new DoorPanel(-0.7).doorOuterY === -0.7, 'DoorPanel 构造正常');
 try { new DoorPanel(NaN); assert(false, 'DoorPanel 应拒 NaN'); } catch (e) { assert(true, 'DoorPanel 拒 NaN'); }
 
+// 4.7 rotated2D 二维调节 (上下 psi × 左右 theta 复合)
+// 折叠轴 [0,1,0] (左右), 与上下轴 [0,0,1] 正交, 同过 turretAxisPoint [2.95,-0.75,1.4]
+const mFold = new ExteriorMirror({ radius: R, sphereCenter: C, outline, turretAxisPoint: [2.95, -0.75, 1.4], turretAxisDir: [0, 0, 1], foldAxisDir: [0, 1, 0] });
+// theta=0 退化为单轴 rotated(psi)
+assert(JSON.stringify(mFold.rotated2D(90, 0).sphereCenter) === JSON.stringify(mFold.rotated(90).sphereCenter),
+  'rotated2D(90,0) == rotated(90) (theta=0 退化单轴)');
+// 绕左右轴 Y 90°: 偏移 [-0.05,0,0.15] → [0.15,0,0.05] → 球心 [3.10,-0.75,1.45]
+const mFoldTheta = mFold.rotated2D(0, 90);
+assert(approx(mFoldTheta.sphereCenter[0], 3.10, 1e-6) && approx(mFoldTheta.sphereCenter[1], -0.75, 1e-6) && approx(mFoldTheta.sphereCenter[2], 1.45, 1e-6),
+  `rotated2D(0,90) 绕左右轴转 90° → 球心 [3.10,-0.75,1.45] (得 [${mFoldTheta.sphereCenter.map(v => v.toFixed(3))}])`);
+// 复合: 先绕 Z(上下) 90° 再绕 Y(左右) 90° → 球心 [3.10,-0.80,1.40]
+const mFoldBoth = mFold.rotated2D(90, 90);
+assert(approx(mFoldBoth.sphereCenter[0], 3.10, 1e-6) && approx(mFoldBoth.sphereCenter[1], -0.80, 1e-6) && approx(mFoldBoth.sphereCenter[2], 1.40, 1e-6),
+  `rotated2D(90,90) 先上下后左右复合 → 球心 [3.10,-0.80,1.40] (得 [${mFoldBoth.sphereCenter.map(v => v.toFixed(3))}])`);
+// (0,0) 恒等
+assert(JSON.stringify(mFold.rotated2D(0, 0).outline) === JSON.stringify(mFold.outline), 'rotated2D(0,0) 恒等');
+// 无折叠轴退化: m0 (foldAxisDir=null) → rotated2D(90,45) == rotated(90)
+assert(JSON.stringify(m0.rotated2D(90, 45).sphereCenter) === JSON.stringify(m0.rotated(90).sphereCenter),
+  '无折叠轴 rotated2D(90,45) == rotated(90) (fold null 退化)');
+
 // ======================================================================
 // 5. 反射点解算 (findMirrorPointForTarget)
 // ======================================================================
@@ -186,6 +206,18 @@ assert(vSmall.mirrorPass === false, `原小帽面应 FAIL (得 mirrorPass=${vSma
 const search = searchExteriorAngles(E, -0.7, ground, coverMirror, { step: 1.0, range: 3.0 });
 assert(search.found === true, `大帽面 ±3° 搜索应找到 PASS (bestPsi=${search.bestPsi})`);
 assert(search.results.length >= 5, `搜索覆盖 ${search.results.length} 档角度`);
+// 7.3b 单轴向后兼容: 无折叠轴 coverMirror → 结果项无 theta 字段, bestTheta=null
+assert(search.bestTheta === null, '单轴搜索 bestTheta=null (向后兼容)');
+assert(search.results.every(r => r.theta === undefined), '单轴搜索结果项无 theta 字段 (向后兼容)');
+// 7.3c 二维搜索: 带折叠轴的大帽面 ±3°×±3° (步 1.0, 7×7=49 档) 找到 PASS
+const coverFold = new ExteriorMirror({ radius: R, sphereCenter: C, outline: [corner(1, 1, 12), corner(-1, 1, 12), corner(-1, -1, 12), corner(1, -1, 12)], turretAxisPoint: [2.95, -0.75, 1.4], turretAxisDir: [0, 0, 1], foldAxisDir: [0, 1, 0] });
+const search2D = searchExteriorAngles(E, -0.7, ground, coverFold, { step: 1.0, range: 3.0 });
+assert(search2D.found === true, `二维 ±3°×±3° 搜索应找到 PASS (bestPsi=${search2D.bestPsi}, bestTheta=${search2D.bestTheta})`);
+assert(search2D.results.length === 49, `二维搜索覆盖 ${search2D.results.length} 档 (7×7=49)`);
+assert(search2D.bestTheta !== null, `二维搜索 bestTheta 非空 (得 ${search2D.bestTheta})`);
+// 7.3d 二维默认步长 0.5 → 13×13=169 档
+const search2DFull = searchExteriorAngles(E, -0.7, ground, coverFold, { step: 0.5, range: 3.0 });
+assert(search2DFull.results.length === 169, `二维默认步长覆盖 ${search2DFull.results.length} 档 (13×13=169)`);
 // 7.4 regulation 透传 plumbing: 传显式 III 类 regulation 与缺省结果一致 (buildTriangles 参数化回归)
 const vReg = verifyExterior(E, -0.7, ground, coverMirror,
   { samplePerEdge: 8, regulation: { dist_near: 4, width_near: 1, dist_far: 20, width_far: 4 } });

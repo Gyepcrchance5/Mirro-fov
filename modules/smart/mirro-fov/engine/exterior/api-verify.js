@@ -84,7 +84,7 @@ function verifyOne(side, raw, opts = {}) {
   const fit = fitSphereFromOutline(mir.outline_raw, { srDesign: mir.sr_fit, eye: eyeCenter, supplierCenter: mir.supplier_sphere_center, coplanarTolMm: 1.0 });
   const gate = validateOutlineOnSphere(mir.outline_raw, fit.center, mir.sr_fit);
   const projOutline = projectToSphere(mir.outline_raw, fit.center, mir.sr_fit);
-  let mirror = new ExteriorMirror({ radius: mir.sr_fit, sphereCenter: fit.center, outline: projOutline, turretAxisPoint: mir.turret_axis_p1, turretAxisDir: mir.rotation_axis_dir });
+  let mirror = new ExteriorMirror({ radius: mir.sr_fit, sphereCenter: fit.center, outline: projOutline, turretAxisPoint: mir.turret_axis_p1, turretAxisDir: mir.rotation_axis_dir, foldAxisDir: mir.fold_axis_dir });
   if (psi) mirror = mirror.rotated(psi);
 
   const v = verifyExterior(eyes, doorOuterY, ground, mirror, { samplePerEdge, minMarginMm, regulation });
@@ -176,16 +176,31 @@ function verifyExteriorBoth(p, opts = {}) {
       farMinMargin: farMin === null ? null : r4(farMin),
       nearEdges: r.v.near.edges.map(e => ({ name: e.name, pass: e.pass, visible: e.samples.filter(s => s.visible).length + '/' + e.samples.length })),
       farEdges: r.v.far.edges.map(e => ({ name: e.name, pass: e.pass, visible: e.samples.filter(s => s.visible).length + '/' + e.samples.length })),
-      search: { found: r.search.found, bestPsi: r.search.bestPsi, window: r.search.results.filter(x => x.mirrorPass).map(x => x.psi), results: r.search.results },
+      search: {
+        found: r.search.found,
+        bestPsi: r.search.bestPsi,
+        bestTheta: r.search.bestTheta ?? null,
+        window: r.search.results.filter(x => x.mirrorPass).map(x => x.psi),
+        window2D: r.search.results.filter(x => x.mirrorPass).map(x => ({ psi: x.psi, theta: x.theta ?? null })),
+        results: r.search.results,
+      },
       fit: { method: r.fit.method, center: r4v(r.fit.center), radius: r4(r.fit.radius), residualMm: r4(r.fit.fitResidualMm),
         crossCheck: cc ? { ok: cc.ok, devMm: r4(cc.devMm) } : null, gate: { ok: r.gate.ok, maxDevMm: r4(r.gate.maxDevMm) } },
     };
   }
 
-  // 共同窗口: 同一个 ψ 使两镜都过的角度 (两镜各搜结果的交集)
-  const Lpass = new Set(L.search.results.filter(x => x.mirrorPass).map(x => x.psi));
-  const commonWindow = R.search.results.filter(x => x.mirrorPass && Lpass.has(x.psi)).map(x => x.psi);
-  const commonSearch = { found: commonWindow.length > 0, bestPsi: commonWindow[0] ?? null, window: commonWindow };
+  // 共同窗口: 同一 (psi, theta) 使两镜都过 (二维交集; 单轴退化时 theta=null, 交集退化为 psi 交集)
+  const key = x => `${x.psi},${x.theta ?? null}`;
+  const Lpass = new Set(L.search.results.filter(x => x.mirrorPass).map(key));
+  const commonPairs = R.search.results.filter(x => x.mirrorPass && Lpass.has(key(x)))
+    .map(x => ({ psi: x.psi, theta: x.theta ?? null }));
+  const commonSearch = {
+    found: commonPairs.length > 0,
+    bestPsi: commonPairs[0] ? commonPairs[0].psi : null,
+    bestTheta: commonPairs[0] ? commonPairs[0].theta : null,
+    window: [...new Set(commonPairs.map(x => x.psi))],
+    pairs: commonPairs,
+  };
 
   return {
     path: p || path.join(EXTERIOR_DIR, 'exterior-vehicle-draft.json'),

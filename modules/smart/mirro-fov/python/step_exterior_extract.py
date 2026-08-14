@@ -418,11 +418,12 @@ def extract_exterior(entities, points, step_name="step", manual=None):
 
         # 轴线: STEP 坐标系 > --json 现有 > 默认 [0,1,0]+质心
         axis = {'turret_axis_p1': centroid_m, 'rotation_axis_dir': [0.0, 1.0, 0.0],
-                'axis_y_point': None, 'axis_z_point': None}
+                'fold_axis_dir': None, 'axis_y_point': None, 'axis_z_point': None}
         frame = frames.get(side)
         if frame is not None:
             axis['turret_axis_p1'] = frame['turret_axis_p1']
             axis['rotation_axis_dir'] = frame['rotation_axis_dir']
+            axis['fold_axis_dir'] = frame['fold_axis_dir']
             # 与 draft 对齐: axis_y_point = p1 + 0.1*rotation, axis_z_point = p1 + 0.1*fold
             p1 = np.array(frame['turret_axis_p1'])
             rot = np.array(frame['rotation_axis_dir'])
@@ -433,6 +434,7 @@ def extract_exterior(entities, points, step_name="step", manual=None):
             mm = manual[f'exterior_mirror_{side}']
             axis['turret_axis_p1'] = mm['turret_axis_p1']
             axis['rotation_axis_dir'] = mm.get('rotation_axis_dir', axis['rotation_axis_dir'])
+            axis['fold_axis_dir'] = mm.get('fold_axis_dir', axis['fold_axis_dir'])
             axis['axis_y_point'] = mm.get('axis_y_point')
             axis['axis_z_point'] = mm.get('axis_z_point')
 
@@ -447,6 +449,7 @@ def extract_exterior(entities, points, step_name="step", manual=None):
             'axis_y_point': axis['axis_y_point'],
             'axis_z_point': axis['axis_z_point'],
             'rotation_axis_dir': axis['rotation_axis_dir'],
+            'fold_axis_dir': axis['fold_axis_dir'],
         }
 
     print("STEP_PROGRESS|提取车门/眼点/地面...")

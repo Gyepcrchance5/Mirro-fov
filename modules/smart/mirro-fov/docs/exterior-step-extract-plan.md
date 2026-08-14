@@ -500,3 +500,59 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 
 ## 执行顺序
 10.1 (提取器别名+\X2\解码) → 10.2 (文档) → 验收 (modena + axis-test + 合成中文)。
+
+---
+
+# 阶段 11 — 外镜二维调节校核 (上下+左右各 ±3°)
+
+> 法规正确性修复: GB 15084 允许初始位置不满足视野时, 可"上下 + 左右"各 ±3° 调节后校核最佳视野。
+> 现状引擎只绕一根轴(rotation_axis_dir, 上下调节)做一维 psi 搜索, 左右调节轴(fold_axis_dir)未建模。
+> 这是 engine 层改动 (首次改引擎, 法规要求, 必须做)。
+
+## 现状 (已确认)
+- `ExteriorMirror` 只有一根轴 `turretAxisDir`(= rotation_axis_dir, ≈水平倾斜 22.7°/32.7°), `rotated(psi)` 绕单轴。
+- `searchExteriorAngles` 一维 psi ∈ [-3,3] 步 0.5。
+- `fold_axis_dir` 在 find_mirror_frames 返回里, 但 extract_exterior 输出没存 (只算了 axis_z_point), draft JSON 也没有该字段, 引擎完全没用。
+- 两根轴实测: rotation_axis_dir(上下轴,≈Y倾斜) / fold_axis_dir(左右轴,≈整车Z偏0.31°)。
+
+## 目标
+绕两根正交轴 (上下轴 rotation_axis_dir + 左右轴 fold_axis_dir) 各 ±3° 做二维搜索, 找使 mirrorPass 的 (psi, theta)。
+
+## 实现
+
+### 11.1 提取器 step_exterior_extract.py
+- extract_exterior 输出 `fold_axis_dir` 字段 (对称 rotation_axis_dir), 从 frame['fold_axis_dir'] 写进 mirrors[side]。
+- 轴字段: turret_axis_p1 + rotation_axis_dir + fold_axis_dir + axis_y_point(=p1+0.1*rot) + axis_z_point(=p1+0.1*fold)。
+
+### 11.2 引擎 exterior-mirror.js
+- `ExteriorMirror` 构造函数加可选 `foldAxisDir` (默认 null), 存 this.foldAxisDir (normalize)。
+- 新增 `rotated2D(psiDeg, thetaDeg)`: 先绕 turretAxisDir 转 psi(上下), 再绕 foldAxisDir 转 theta(左右); 两轴都是物理基准不随旋转变。foldAxisDir 为 null 时退化为 rotated(psi)。
+- **保持 rotated(psiDeg) 单轴向后兼容** (test-exterior.js 现有 rotated(0)/rotated(90) 断言不能破坏)。
+- `searchExteriorAngles`: 二维搜索。若 mirrorBase.foldAxisDir 存在 → psi×theta 各 [-3,3] 步 0.5 (13×13=169 档); 否则退化为现有单轴 psi 搜索 (向后兼容)。返回 {found, bestPsi, bestTheta, results (二维展平)}。
+
+### 11.3 api-verify.js
+- verifyOne 传 foldAxisDir = mir.fold_axis_dir (从车型 JSON 读; 缺省 null → 退化为单轴, 向后兼容 draft)。
+- summary 的 search 字段加 bestTheta / window 描述。
+
+### 11.4 draft JSON
+- exterior_mirror_left/right 加 `fold_axis_dir` (从 _meta.axis_verified_2026_08_06 的 fold_axis_dir 拷贝)。
+
+### 11.5 测试 engine/exterior/test-exterior.js
+- 新增: rotated2D 绕两轴正确性 (绕上下轴 psi + 左右轴 theta 的复合)。
+- 更新: searchExteriorAngles 二维搜索断言 (大帽面 ±3°×±3° 找到 PASS)。
+- 保留: rotated 单轴断言不动。
+
+## 验证 (重点)
+1. 左镜: 加了左右调节, 窗口更大, 仍 PASS; bestPsi/bestTheta 记录。
+2. **右镜: 加了左右调节, 结论可能翻转 (FAIL → PASS)** — 之前"右镜 FAIL 几何极限"是只考虑上下调节的结论, 左右调节可能覆盖近场 1m 宽地面。必须用 draft 数据验证右镜新结论, 如实报告。
+3. 155 断言: test-inner(49) + test-sphere-fit(51) 不变; test-exterior(55) 更新后全绿。
+4. npm test 全绿。
+
+## 约束
+1. 引擎可改 (法规要求), 但保持 rotated 单轴 + searchExteriorAngles 单轴退化路径向后兼容。
+2. 提取器只改 step_exterior_extract.py; 引擎改 exterior-mirror.js + api-verify.js + test-exterior.js。
+3. foldAxisDir 缺省 null → 完全向后兼容旧车型/draft。
+4. 二维搜索 step 0.5, 169 档, 注意性能 (可接受)。
+
+## 执行顺序
+11.1 (提取器 fold_axis_dir) → 11.2 (引擎 rotated2D + 二维搜索) → 11.3 (api-verify 传参) → 11.4 (draft 字段) → 11.5 (测试) → 验证左右镜结论。
