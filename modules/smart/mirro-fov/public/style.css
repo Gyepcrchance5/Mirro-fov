@@ -578,6 +578,59 @@ h4, .h4 {
 }
 
 /* ============================================================
+   校核页参数详情折叠头
+   ============================================================ */
+.param-collapse-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 2px;
+}
+.param-collapse-btn { flex: none; }
+.param-collapse-summary {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   提取摘要表格 (向导紧凑 参数|值|状态)
+   ============================================================ */
+.extract-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.extract-summary-table td {
+  border: none;
+  padding: 3px 8px 3px 0;
+  vertical-align: top;
+}
+.extract-summary-table .st-k {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+  width: 88px;
+}
+.extract-summary-table .st-v {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.extract-summary-table .st-s {
+  width: 32px;
+  text-align: right;
+  white-space: nowrap;
+}
+.st-ok { color: #34c759; font-weight: 600; }
+.st-warn { color: #ff9f0a; font-weight: 600; }
+
+/* ============================================================
    可访问性: 键盘焦点 + 减少动效
    ============================================================ */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

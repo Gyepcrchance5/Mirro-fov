@@ -62,8 +62,15 @@
       xhr.open('POST', url);
       const headers = Object.assign({ 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, opts.headers || {});
       for (const k of Object.keys(headers)) xhr.setRequestHeader(k, headers[k]);
+      // 节流: 大文件(141MB)onprogress 每秒触发数百次, 直接更新 DOM 会冻结浏览器
+      // 最多 500ms 更新一次, 避免 DOM 写入风暴
+      let lastProgress = 0;
       xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable && typeof opts.onProgress === 'function') opts.onProgress(e.loaded, e.total);
+        if (!e.lengthComputable || typeof opts.onProgress !== 'function') return;
+        const now = Date.now();
+        if (now - lastProgress < 500 && e.loaded < e.total) return;
+        lastProgress = now;
+        opts.onProgress(e.loaded, e.total);
       };
       xhr.onload = () => {
         let d;
@@ -106,6 +113,16 @@
   }
   function showRetry(resultId, onClick) { const b = ensureRetryBtn(resultId, onClick); if (b) b.style.display = ''; }
   function hideRetry(resultId) { const b = $(resultId + '-retry'); if (b) b.style.display = 'none'; }
+
+  // 参数详情折叠: 点击折叠头 toggle 参数卡区 + 按钮文字 ▸/▾ (手动 toggle, 与现有 style.display 模式一致)
+  function toggleParamCollapse(toggleId, collapseId) {
+    const btn = $(toggleId);
+    const box = $(collapseId);
+    if (!btn || !box) return;
+    const open = box.style.display !== 'none';
+    box.style.display = open ? 'none' : '';
+    btn.textContent = (open ? '▸ ' : '▾ ') + btn.textContent.replace(/^[▸▾] /, '');
+  }
 
   // ====== 参数收集 ======
   const pv = (el, def) => { const v = parseFloat(el.value); return isNaN(v) ? def : v; };
@@ -685,6 +702,11 @@
     curFarDist = Number.isFinite(cfg.farDist) ? cfg.farDist : 60.0;
     curReqWidth = Number.isFinite(cfg.reqWidth) ? cfg.reqWidth : 20.0;
     elLastAngles.textContent = `已加载车型: ${cfg.name}`;
+    // 折叠头摘要 (宽/高/pivot/角度)
+    const isum = $('inner-params-summary');
+    if (isum) {
+      isum.textContent = `宽 ${Number(cfg.widthMM).toFixed(1)}mm · 高 ${Number(cfg.heightMM).toFixed(1)}mm · pivot=[${(cfg.pvMM || []).map(v => Number(v).toFixed(0)).join(', ')}] · yaw=${cfg.yawDeg}° pitch=${cfg.pitchDeg}°`;
+    }
     // 参数卡只读逻辑: 有 STEP 轮廓时, 镜面尺寸/后挡风 CAS 卡只读
     updateReadonlyState(cfg);
   }
@@ -699,7 +721,7 @@
       if (el) { el.readOnly = hasOutline; el.style.opacity = hasOutline ? '0.6' : ''; }
     });
     // 尺寸卡副标题
-    const sizeHeader = document.querySelector('#param-row .col:nth-child(2) .card-header small');
+    const sizeHeader = document.querySelector('#inner-params-collapse .param-row .col:first-child .card-header small');
     if (sizeHeader) sizeHeader.textContent = hasOutline ? `STEP ${cfg.outlineLocal.length} 点轮廓` : '反射涂层有效区域';
     // 后挡风 CAS 卡: 有后挡风轮廓则只读
     for (let i = 0; i < 7; i++) {
@@ -927,6 +949,7 @@
     }
     elVerifyBtn.addEventListener('click', doVerify);
     elAutoBtn.addEventListener('click', doAutoSearch);
+    $('inner-params-toggle').addEventListener('click', () => toggleParamCollapse('inner-params-toggle', 'inner-params-collapse'));
     $('save-btn').addEventListener('click', doSave);
     $('save-as-btn').addEventListener('click', doSaveAs);
     $('delete-btn').addEventListener('click', doDelete);
@@ -966,6 +989,7 @@
   function initExteriorDOM() {
     $('ext-verify-btn').addEventListener('click', doExtVerify);
     $('ext-auto-btn').addEventListener('click', doExtAuto);
+    $('ext-params-toggle').addEventListener('click', () => toggleParamCollapse('ext-params-toggle', 'ext-params-collapse'));
     $('ext-vehicle-select').addEventListener('change', async (e) => {
       await loadExtConfig(e.target.value);
       await doExtVerify();
@@ -1366,6 +1390,8 @@
     const v = await vR.json();
     if (!v.ok) throw new Error(v.error);
     renderWizExtPreview(v);
+    const sumEl = $('wiz-ext-summary');
+    if (sumEl) sumEl.innerHTML = wizExtSummaryHtml(cfg);
   }
 
   // 重试提取: STEP 已在盘, 不重传, 调 /api/exterior/extract/retry 重新 spawn
@@ -1442,6 +1468,34 @@
     draw('wiz-ext-plot-right', 'wiz-ext-fit-right', rightMir, v.right && v.right.fit, '右镜轮廓');
   }
 
+  // 提取摘要 (外镜): 紧凑表格 参数|值|状态 (SR/球心L|R/轴线L|R/眼点/地面/车门)
+  function wizExtSummaryHtml(cfg) {
+    const ok = '<span class="st-ok">✓</span>';
+    const warn = '<span class="st-warn">⚠️</span>';
+    const rows = [];
+    const add = (label, value, good) => rows.push(`<tr><td class="st-k">${label}</td><td class="st-v">${value}</td><td class="st-s">${good ? ok : warn}</td></tr>`);
+    const fmt3 = v => (Array.isArray(v) && v.length >= 3) ? '[' + v.map(x => Number.isFinite(x) ? x.toFixed(3) : '-').join(', ') + ']' : 'null';
+
+    const L = (cfg.mirrors && cfg.mirrors.left) || {};
+    const R = (cfg.mirrors && cfg.mirrors.right) || {};
+    const drv = cfg.driver || {};
+    const g = cfg.ground || {};
+    const dp = cfg.door_panel || {};
+
+    add('SR 校核', L.sr_fit != null ? L.sr_fit.toFixed(3) + ' m' : 'null', L.sr_fit != null);
+    add('球心 (左)', fmt3(L.sphere_center), Array.isArray(L.sphere_center));
+    add('球心 (右)', fmt3(R.sphere_center), Array.isArray(R.sphere_center));
+    add('轴线 (左)', fmt3(L.rotation_axis_dir), Array.isArray(L.rotation_axis_dir));
+    add('轴线 (右)', fmt3(R.rotation_axis_dir), Array.isArray(R.rotation_axis_dir));
+    const eye = drv.eye_left_raw != null
+      ? `${fmt3(drv.eye_left_raw)} · IPD ${drv.interpupillary_distance != null ? (drv.interpupillary_distance * 1000).toFixed(1) + 'mm' : 'null'}` : 'null';
+    add('眼点', eye, drv.eye_left_raw != null);
+    add('地面', `前 ${fmt3(g.front_mid)} · 后 ${fmt3(g.rear_mid)}`, g.front_mid != null);
+    add('车门 Y', `左 ${dp.door_outer_Y_left} · 右 ${dp.door_outer_Y_right}`, dp.door_outer_Y_left != null);
+
+    return `<table class="extract-summary-table"><tbody>${rows.join('')}</tbody></table>`;
+  }
+
   // Step 2: 从 3DE 读取轴线方向 (仅取 rotation_axis_dir; 无 CATIA 环境时失败提示不崩)
   async function wizExtReadFrom3DE() {
     const btn = $('wiz-ext-catia-btn');
@@ -1505,12 +1559,6 @@
 
   function initWizardExterior() {
     $('wiz-ext-back').addEventListener('click', () => showPage('mirror-type'));
-    $('wiz-ext-step0-next').addEventListener('click', () => wizardExtNext(0));
-    $('wiz-ext-step1-prev').addEventListener('click', () => wizardExtPrev(1));
-    $('wiz-ext-step1-next').addEventListener('click', () => wizardExtNext(1));
-    $('wiz-ext-step2-prev').addEventListener('click', () => wizardExtPrev(2));
-    $('wiz-ext-step2-next').addEventListener('click', () => wizardExtNext(2));
-    $('wiz-ext-step3-prev').addEventListener('click', () => wizardExtPrev(3));
     $('wiz-ext-upload-btn').addEventListener('click', () => doWizExtUpload());
     $('wiz-ext-step').addEventListener('change', () => doWizExtUpload());
     $('wiz-ext-catia-btn').addEventListener('click', wizExtReadFrom3DE);
@@ -1545,18 +1593,36 @@
   function wizIntSummaryHtml(r) {
     const m = r.mirror || {}, d = r.driver || {}, g = r.ground || {}, rw = r.rear_window || {};
     const missing = (r._meta && r._meta.missing_named) || [];
-    const lines = [
-      '镜面: 宽 ' + (m.width != null ? (m.width * 1000).toFixed(2) + 'mm' : 'null') +
-        ' · 高 ' + (m.height != null ? (m.height * 1000).toFixed(2) + 'mm' : 'null'),
-      '安装角: yaw ' + (m.yaw != null ? m.yaw.toFixed(2) + '°' : 'null') +
-        ' · pitch ' + (m.pitch != null ? m.pitch.toFixed(2) + '°' : 'null'),
-      'pivot ' + fmtWizIntVec(m.pivot) + ' · center_zero ' + fmtWizIntVec(m.center_zero),
-      '眼点 ' + fmtWizIntVec(d.eye_center) + ' · IPD ' + ((d.interpupillary_distance || 0) * 1000).toFixed(1) + 'mm',
-      '地面 前 ' + fmtWizIntVec(g.front_mid) + ' · 后 ' + fmtWizIntVec(g.rear_mid),
-      '后挡风 ' + (rw.outline && rw.outline.length ? rw.outline.length + ' 点' : '未命名 (可空)'),
-    ];
-    if (missing.length) lines.push('<span style="color:#ff9f0a">缺命名: ' + missing.join('; ') + '</span>');
-    return lines.join('<br>');
+    const ok = '<span class="st-ok">✓</span>';
+    const warn = '<span class="st-warn">⚠️</span>';
+    const rows = [];
+    const add = (label, value, good) => rows.push(`<tr><td class="st-k">${label}</td><td class="st-v">${value}</td><td class="st-s">${good ? ok : warn}</td></tr>`);
+
+    const wh = (m.width != null && m.height != null)
+      ? `宽 ${(m.width * 1000).toFixed(2)}mm · 高 ${(m.height * 1000).toFixed(2)}mm` : 'null';
+    add('镜面', wh, m.width != null && m.height != null);
+
+    const ang = (m.yaw != null && m.pitch != null)
+      ? `yaw ${m.yaw.toFixed(2)}° · pitch ${m.pitch.toFixed(2)}°` : 'null';
+    add('安装角', ang, m.yaw != null && m.pitch != null);
+
+    add('球铰 pivot', fmtWizIntVec(m.pivot), m.pivot != null);
+    add('镜面中心', fmtWizIntVec(m.center_zero), m.center_zero != null);
+
+    const eye = d.eye_center != null
+      ? `${fmtWizIntVec(d.eye_center)} · IPD ${((d.interpupillary_distance || 0) * 1000).toFixed(1)}mm` : 'null';
+    add('眼点', eye, d.eye_center != null);
+
+    const ground = (g.front_mid != null && g.rear_mid != null)
+      ? `前 ${fmtWizIntVec(g.front_mid)} · 后 ${fmtWizIntVec(g.rear_mid)}` : 'null';
+    add('地面', ground, g.front_mid != null && g.rear_mid != null);
+
+    const rwOk = !!(rw.outline && rw.outline.length);
+    add('后挡风', rwOk ? `${rw.outline.length} 点` : '未命名 (可空)', rwOk);
+
+    if (missing.length) rows.push(`<tr><td class="st-k">缺命名</td><td class="st-v">${missing.join('; ')}</td><td class="st-s">${warn}</td></tr>`);
+
+    return `<table class="extract-summary-table"><tbody>${rows.join('')}</tbody></table>`;
   }
 
   // Step 1: 上传整车 STEP → 提取到 tmp → 预览镜面轮廓 2D + 参数摘要
@@ -1610,8 +1676,7 @@
     wizIntResult = d.result || null;
     if (!wizIntResult) throw new Error('提取结果为空');
     renderWizIntPreview(wizIntResult);
-    $('wiz-int-confirm').innerHTML = wizIntSummaryHtml(wizIntResult);
-    $('wiz-int-summary-final').innerHTML = wizIntSummaryHtml(wizIntResult);
+    renderWizIntRwPreview(wizIntResult);
   }
 
   // 重试提取: STEP 已在盘, 不重传, 调 /api/interior/extract/retry 重新 spawn
@@ -1683,6 +1748,41 @@
     $('wiz-int-summary').innerHTML = wizIntSummaryHtml(r);
   }
 
+  // 后挡风轮廓预览: 提取到 rear_window.outline (3D 米) → 画 Y-Z 2D 轮廓; 否则显示缺命名提示
+  function renderWizIntRwPreview(r) {
+    const el = $('wiz-int-plot-rw');
+    if (!el) return;
+    const rw = (r && r.rear_window) || {};
+    const ol = rw.outline;
+    if (typeof Plotly === 'undefined') {
+      el.innerHTML = '<div style="padding:70px 12px;text-align:center;color:#9a9aa0;font-size:12px">Plotly 未加载, 无法预览</div>';
+      return;
+    }
+    if (!ol || ol.length < 3) {
+      el.innerHTML = '<div style="padding:70px 12px;text-align:center;color:#ff9f0a;font-size:12px">⚠️ 缺 "后挡风" 命名面, 无法预览后挡风轮廓</div>';
+      return;
+    }
+    const is2D = ol[0] && ol[0].length === 2;
+    const xs = ol.map(p => (is2D ? p[0] : p[1]) * 1000); // mm
+    const ys = ol.map(p => (is2D ? p[1] : p[2]) * 1000);
+    xs.push(xs[0]); ys.push(ys[0]);
+    const uMin = Math.min(...xs), uMax = Math.max(...xs), vMin = Math.min(...ys), vMax = Math.max(...ys);
+    const pad = Math.max(uMax - uMin, vMax - vMin) * 0.15;
+    Plotly.react(el, [{
+      x: xs, y: ys, mode: 'lines+markers',
+      line: { color: '#0071e3', width: 2 },
+      marker: { size: 3, color: '#0071e3' },
+      fill: 'toself', fillcolor: 'rgba(0,113,227,0.08)',
+    }], {
+      xaxis: { title: 'y (mm)', range: [uMin - pad, uMax + pad], scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+      yaxis: { title: 'z (mm)', range: [vMin - pad, vMax + pad], gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+      margin: { l: 50, r: 10, t: 24, b: 40 },
+      paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+      font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
+      title: { text: '后挡风轮廓 · ' + ol.length + ' 点', font: { size: 12, color: '#6e6e73' } },
+    }, { responsive: true });
+  }
+
   // Step 3: 保存并校核 — 深拷贝 wizIntResult (轮廓已 inline), 单接口 POST /api/interior/save → 跳 inner-page。
   // 对齐 doWizExtSave: 无 modena 硬编码默认值, 关键参数任一 null → 提示缺哪个 + 阻止保存 (不兜底)。
   async function doWizIntSave() {
@@ -1737,12 +1837,6 @@
 
   function initWizardInterior() {
     $('wiz-int-back').addEventListener('click', () => showPage('mirror-type'));
-    $('wiz-int-step0-next').addEventListener('click', () => wizardIntNext(0));
-    $('wiz-int-step1-prev').addEventListener('click', () => wizardIntPrev(1));
-    $('wiz-int-step1-next').addEventListener('click', () => wizardIntNext(1));
-    $('wiz-int-step2-prev').addEventListener('click', () => wizardIntPrev(2));
-    $('wiz-int-step2-next').addEventListener('click', () => wizardIntNext(2));
-    $('wiz-int-step3-prev').addEventListener('click', () => wizardIntPrev(3));
     $('wiz-int-upload-btn').addEventListener('click', () => doWizIntUpload());
     $('wiz-int-step').addEventListener('change', () => doWizIntUpload());
     $('wiz-int-save-btn').addEventListener('click', doWizIntSave);
@@ -1793,6 +1887,13 @@
       $('ext-verdict-detail').textContent = '点击校核';
       $('ext-verdict-edges').innerHTML = ''; $('ext-verdict-fit').textContent = ''; $('ext-auto-status').textContent = '';
       $('ext-status').textContent = '';
+      // 折叠头摘要 (SR / 球心 / 眼距)
+      const esum = $('ext-params-summary');
+      if (esum) {
+        const cL = L.sphere_center || [];
+        const ipdMm = d.driver.interpupillary_distance != null ? (d.driver.interpupillary_distance * 1000).toFixed(1) : '-';
+        esum.textContent = `SR=${L.sr_fit != null ? L.sr_fit.toFixed(3) + 'm' : '-'} · 球心=[${cL.map(v => v.toFixed(3)).join(', ')}] · 眼距=${ipdMm}mm`;
+      }
       // 缺左右调节轴 (fold_axis_dir) 时提示: θ 不生效
       const hasFold = L.fold_axis_dir || R.fold_axis_dir;
       if (!hasFold) {

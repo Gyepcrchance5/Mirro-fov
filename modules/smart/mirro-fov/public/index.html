@@ -111,7 +111,7 @@
       <!-- 参数卡 (7 卡) -->
       <div class="row g-2 mb-2 param-row" id="param-row">
         <!-- 镜面角度 -->
-        <div class="col" style="min-width:130px">
+        <div class="col" style="min-width:130px;max-width:320px">
           <div class="card shadow-sm h-100">
             <div class="card-header py-1 px-2"><div class="card-title mb-0">镜面角度</div><small class="text-muted">yaw=绕Z偏航 pitch=绕Y俯仰</small></div>
             <div class="card-body py-2 px-2">
@@ -124,6 +124,16 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- 参数详情折叠头 (其余参数默认收起) -->
+      <div class="param-collapse-head mb-2">
+        <button id="inner-params-toggle" class="btn btn-outline-accent btn-sm param-collapse-btn">▸ 参数详情</button>
+        <span id="inner-params-summary" class="param-collapse-summary">尚未加载</span>
+      </div>
+
+      <div id="inner-params-collapse" style="display:none">
+        <div class="row g-2 mb-2 param-row">
         <!-- 镜面尺寸 -->
         <div class="col" style="min-width:130px">
           <div class="card shadow-sm h-100">
@@ -204,6 +214,7 @@
       <div id="tz-section-title" class="section-title">后挡风 透光区 (4 点)</div>
       <div class="row g-2 mb-2" id="tz-row">
         <!-- rw-t0..rw-t3 动态由 JS 生成 -->
+      </div>
       </div>
 
       <!-- 双视图上下排列: 各占全宽; 高度由内容真实比例 (aspect-ratio) 自适应, 填满无留白 -->
@@ -352,64 +363,50 @@
 
       <div class="center-wrap">
 
-        <!-- Step 0: 基本信息 -->
-        <div class="wizard-step" data-step="0">
-          <div class="step-head"><span class="step-num">1</span>基本信息</div>
-          <div class="wizard-card">
-            <div class="wizard-body">
-              <div class="wizard-field">
-                <label class="wizard-label">车型名称</label>
-                <input id="wiz-ext-name" type="text" class="form-control form-control-sm" placeholder="例如: 新外镜车型A">
-              </div>
-              <div class="wizard-field">
-                <label class="wizard-label">镜子类型</label>
-                <input type="text" class="form-control form-control-sm" value="外后视镜 (III 类)" readonly>
+        <div class="wizard-card">
+          <div class="wizard-body">
+
+            <!-- 车型名 -->
+            <div class="wizard-field">
+              <label class="wizard-label">车型名称</label>
+              <input id="wiz-ext-name" type="text" class="form-control form-control-sm" placeholder="例如: 新外镜车型A">
+            </div>
+            <div class="wizard-field">
+              <label class="wizard-label">镜子类型</label>
+              <input type="text" class="form-control form-control-sm" value="外后视镜 (III 类)" readonly>
+            </div>
+
+            <div class="wizard-divider"></div>
+
+            <!-- 上传整车 STEP -->
+            <div class="wizard-section">
+              <div class="wizard-section-title">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></div>
+              <input id="wiz-ext-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
+              <div class="wizard-actions">
+                <button id="wiz-ext-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
+                <span id="wiz-ext-result" class="wizard-result">选择文件后自动提取</span>
               </div>
             </div>
-          </div>
-          <div class="wizard-nav">
-            <button id="wiz-ext-step0-next" class="btn btn-solid">下一步</button>
-          </div>
-        </div>
 
-        <!-- Step 1: 上传整车 STEP → 提取 → 预览左右轮廓 -->
-        <div class="wizard-step" data-step="1" style="display:none">
-          <div class="step-head"><span class="step-num">2</span>上传整车 STEP 并提取</div>
-          <div class="wizard-card">
-            <div class="wizard-body">
-              <div class="wizard-section">
-                <div class="wizard-section-title">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></div>
-                <input id="wiz-ext-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
-                <div class="wizard-actions">
-                  <button id="wiz-ext-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
-                  <span id="wiz-ext-result" class="wizard-result">选择文件后自动提取</span>
+            <!-- 左右轮廓预览 -->
+            <div class="wizard-preview" id="wiz-ext-preview" style="display:none">
+              <div class="row g-2">
+                <div class="col-md-6 col-12">
+                  <div id="wiz-ext-plot-left" style="height:220px"></div>
+                  <div id="wiz-ext-fit-left" class="text-muted" style="font-size:11px"></div>
                 </div>
-              </div>
-              <div class="wizard-preview" id="wiz-ext-preview" style="display:none">
-                <div class="row g-2">
-                  <div class="col-md-6 col-12">
-                    <div id="wiz-ext-plot-left" style="height:220px"></div>
-                    <div id="wiz-ext-fit-left" class="text-muted" style="font-size:11px"></div>
-                  </div>
-                  <div class="col-md-6 col-12">
-                    <div id="wiz-ext-plot-right" style="height:220px"></div>
-                    <div id="wiz-ext-fit-right" class="text-muted" style="font-size:11px"></div>
-                  </div>
+                <div class="col-md-6 col-12">
+                  <div id="wiz-ext-plot-right" style="height:220px"></div>
+                  <div id="wiz-ext-fit-right" class="text-muted" style="font-size:11px"></div>
                 </div>
               </div>
             </div>
-          </div>
-          <div class="wizard-nav">
-            <button id="wiz-ext-step1-prev" class="btn btn-outline-accent">上一步</button>
-            <button id="wiz-ext-step1-next" class="btn btn-solid">下一步</button>
-          </div>
-        </div>
 
-        <!-- Step 2: 轴线录入 -->
-        <div class="wizard-step" data-step="2" style="display:none">
-          <div class="step-head"><span class="step-num">3</span>轴线录入</div>
-          <div class="wizard-card">
-            <div class="wizard-body">
+            <div class="wizard-divider"></div>
+
+            <!-- 轴线录入 -->
+            <div class="wizard-section">
+              <div class="wizard-section-title">旋转轴方向 <span class="wizard-tag wizard-tag-required">必填</span></div>
               <div class="wizard-actions wizard-actions-head">
                 <button id="wiz-ext-catia-btn" class="btn btn-solid btn-sm">从 3DE 读取</button>
                 <span class="wizard-result">或手动输入旋转轴方向 (整车坐标)</span>
@@ -439,27 +436,19 @@
                 </div>
               </div>
             </div>
-          </div>
-          <div class="wizard-nav">
-            <button id="wiz-ext-step2-prev" class="btn btn-outline-accent">上一步</button>
-            <button id="wiz-ext-step2-next" class="btn btn-solid">下一步</button>
-          </div>
-        </div>
 
-        <!-- Step 3: 确认 + 保存并校核 -->
-        <div class="wizard-step" data-step="3" style="display:none">
-          <div class="step-head"><span class="step-num">4</span>保存并校核</div>
-          <div class="wizard-card">
-            <div class="wizard-body">
-              <div class="wizard-field">
-                <label class="wizard-label">确认信息</label>
-                <div id="wiz-ext-summary" class="text-muted" style="font-size:12px;line-height:1.8">提取与轴线录入完成后, 保存为外镜车型并跳转校核页。</div>
-              </div>
+            <div class="wizard-divider"></div>
+
+            <!-- 提取摘要 -->
+            <div class="wizard-field">
+              <label class="wizard-label">提取摘要</label>
+              <div id="wiz-ext-summary" class="text-muted" style="font-size:12px;line-height:1.8">上传整车 STEP 后自动显示提取参数。</div>
             </div>
-          </div>
-          <div class="wizard-nav">
-            <button id="wiz-ext-step3-prev" class="btn btn-outline-accent">上一步</button>
-            <button id="wiz-ext-save-btn" class="btn btn-solid">保存并校核</button>
+
+            <div class="wizard-nav">
+              <button id="wiz-ext-save-btn" class="btn btn-solid">保存并校核</button>
+            </div>
+
           </div>
         </div>
 
@@ -475,82 +464,52 @@
 
       <div class="center-wrap">
 
-        <!-- Step 0: 基本信息 -->
-        <div class="wizard-step" data-step="0">
-          <div class="step-head"><span class="step-num">1</span>基本信息</div>
-          <div class="wizard-card">
-            <div class="wizard-body">
-              <div class="wizard-field">
-                <label class="wizard-label">车型名称</label>
-                <input id="wiz-int-name" type="text" class="form-control form-control-sm" placeholder="例如: 新内镜车型A">
-              </div>
-              <div class="wizard-field">
-                <label class="wizard-label">镜子类型</label>
-                <input type="text" class="form-control form-control-sm" value="内后视镜 (I 类, 平面镜)" readonly>
+        <div class="wizard-card">
+          <div class="wizard-body">
+
+            <!-- 车型名 -->
+            <div class="wizard-field">
+              <label class="wizard-label">车型名称</label>
+              <input id="wiz-int-name" type="text" class="form-control form-control-sm" placeholder="例如: 新内镜车型A">
+            </div>
+            <div class="wizard-field">
+              <label class="wizard-label">镜子类型</label>
+              <input type="text" class="form-control form-control-sm" value="内后视镜 (I 类, 平面镜)" readonly>
+            </div>
+
+            <div class="wizard-divider"></div>
+
+            <!-- 上传整车 STEP -->
+            <div class="wizard-section">
+              <div class="wizard-section-title">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></div>
+              <input id="wiz-int-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
+              <div class="wizard-actions">
+                <button id="wiz-int-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
+                <span id="wiz-int-result" class="wizard-result">选择文件后自动提取</span>
               </div>
             </div>
-          </div>
-          <div class="wizard-nav">
-            <button id="wiz-int-step0-next" class="btn btn-solid">下一步</button>
-          </div>
-        </div>
 
-        <!-- Step 1: 上传整车 STEP → 提取 → 预览镜面轮廓 2D + 参数摘要 -->
-        <div class="wizard-step" data-step="1" style="display:none">
-          <div class="step-head"><span class="step-num">2</span>上传整车 STEP 并提取</div>
-          <div class="wizard-card">
-            <div class="wizard-body">
-              <div class="wizard-section">
-                <div class="wizard-section-title">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></div>
-                <input id="wiz-int-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
-                <div class="wizard-actions">
-                  <button id="wiz-int-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
-                  <span id="wiz-int-result" class="wizard-result">选择文件后自动提取</span>
+            <!-- 镜面轮廓 + 后挡风轮廓预览 -->
+            <div class="wizard-preview" id="wiz-int-preview" style="display:none">
+              <div class="row g-2">
+                <div class="col-md-6 col-12">
+                  <div class="text-muted" style="font-size:11px;margin-bottom:4px">镜面轮廓</div>
+                  <div id="wiz-int-plot" style="height:220px"></div>
+                </div>
+                <div class="col-md-6 col-12">
+                  <div class="text-muted" style="font-size:11px;margin-bottom:4px">后挡风轮廓</div>
+                  <div id="wiz-int-plot-rw" style="height:220px"></div>
                 </div>
               </div>
-              <div class="wizard-preview" id="wiz-int-preview" style="display:none">
-                <div id="wiz-int-plot" style="height:220px"></div>
-                <div id="wiz-int-summary" class="text-muted" style="font-size:11px;line-height:1.7"></div>
-              </div>
             </div>
-          </div>
-          <div class="wizard-nav">
-            <button id="wiz-int-step1-prev" class="btn btn-outline-accent">上一步</button>
-            <button id="wiz-int-step1-next" class="btn btn-solid">下一步</button>
-          </div>
-        </div>
 
-        <!-- Step 2: 参数确认 (只读) -->
-        <div class="wizard-step" data-step="2" style="display:none">
-          <div class="step-head"><span class="step-num">3</span>参数确认</div>
-          <div class="wizard-card">
-            <div class="wizard-body">
-              <div class="wizard-field">
-                <label class="wizard-label">提取参数摘要 (只读)</label>
-                <div id="wiz-int-confirm" class="text-muted" style="font-size:12px;line-height:1.9">尚未提取, 请先返回上一步上传整车 STEP。</div>
-              </div>
-            </div>
-          </div>
-          <div class="wizard-nav">
-            <button id="wiz-int-step2-prev" class="btn btn-outline-accent">上一步</button>
-            <button id="wiz-int-step2-next" class="btn btn-solid">下一步</button>
-          </div>
-        </div>
+            <!-- 提取摘要 (紧凑表格) -->
+            <div id="wiz-int-summary" class="text-muted" style="font-size:12px;line-height:1.7"></div>
 
-        <!-- Step 3: 保存并校核 -->
-        <div class="wizard-step" data-step="3" style="display:none">
-          <div class="step-head"><span class="step-num">4</span>保存并校核</div>
-          <div class="wizard-card">
-            <div class="wizard-body">
-              <div class="wizard-field">
-                <label class="wizard-label">确认信息</label>
-                <div id="wiz-int-summary-final" class="text-muted" style="font-size:12px;line-height:1.8">提取完成, 保存为内镜车型并跳转校核页。</div>
-              </div>
+            <div class="wizard-nav">
+              <button id="wiz-int-save-btn" class="btn btn-solid">保存并校核</button>
             </div>
-          </div>
-          <div class="wizard-nav">
-            <button id="wiz-int-step3-prev" class="btn btn-outline-accent">上一步</button>
-            <button id="wiz-int-save-btn" class="btn btn-solid">保存并校核</button>
+
           </div>
         </div>
 
@@ -611,7 +570,7 @@
       <!-- 参数卡 (L|R 拆分, 等高) -->
       <div class="row g-2 mb-2 param-row" id="ext-param-row">
         <!-- 调节角度 + 校核 + 自动搜角 (绕转向器轴线) -->
-        <div class="col" style="min-width:130px">
+        <div class="col" style="min-width:130px;max-width:320px">
           <div class="card shadow-sm h-100">
             <div class="card-header py-1 px-2"><div class="card-title mb-0">调节角度</div><small class="text-muted">上下 + 左右调节 · ±3°</small></div>
             <div class="card-body py-2 px-2">
@@ -624,6 +583,16 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- 参数详情折叠头 (其余参数默认收起) -->
+      <div class="param-collapse-head mb-2">
+        <button id="ext-params-toggle" class="btn btn-outline-accent btn-sm param-collapse-btn">▸ 参数详情</button>
+        <span id="ext-params-summary" class="param-collapse-summary">尚未加载</span>
+      </div>
+
+      <div id="ext-params-collapse" style="display:none">
+        <div class="row g-2 mb-2 param-row">
         <!-- 镜片曲率 -->
         <div class="col" style="min-width:130px">
           <div class="card shadow-sm h-100">
@@ -751,6 +720,7 @@
           </div>
         </div>
       </div>
+      </div>
 
       <!-- 反射面投影 (左镜) -->
       <div class="panel-frame">
@@ -774,7 +744,7 @@
 
   </div>
 
-  <script src="app.js?v=20260813e"></script>
+  <script src="app.js?v=20260813g"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>
