@@ -36,6 +36,7 @@
   const elRwBadge = $('rw-badge');
   const elVerdictLines = $('verdict-lines');
   const elVerdictFailures = $('verdict-failures');
+  const elVerdictRwLines = $('verdict-rw-lines');
 
   const API_BASE = window.location.pathname.replace(/\/+$/, '') + '/api';
   let currentPath = null;
@@ -398,14 +399,12 @@
           if (ep === 'BL') { edgeX = -hw; edgeY = ly; dist = Math.abs(lx + hw); }
           else if (ep === 'BR') { edgeX = hw; edgeY = ly; dist = Math.abs(lx - hw); }
           else { edgeX = lx; edgeY = hh; dist = Math.abs(ly - hh); }
-          // 减法: 框外必标; 框内仅临界(margin<30mm)才标 — 避免数字堆叠遮挡
-          if (!ld.onMirror || dist < 30) {
-            shapes.push({ type: 'line', x0: lx, y0: ly, x1: edgeX, y1: edgeY,
-              line: { color: '#ff3b30', width: 1.5, dash: 'dot' } });
-            const [tx, ty] = dimLabelPos(lx, ly, edgeX, edgeY, triCentroid);
-            annotations.push({ x: tx, y: ty, text: `${dist.toFixed(0)}mm`, showarrow: false,
-              font: { size: 10, color: '#ff3b30', family: 'Arial Black' }, xanchor: 'center', yanchor: 'middle' });
-          }
+          // 距边标注: 法规规范要求红色密集虚线 + 红字 — 全部 5 线统一样式
+          shapes.push({ type: 'line', x0: lx, y0: ly, x1: edgeX, y1: edgeY,
+            line: { color: '#ff3b30', width: 1.5, dash: 'dot' } });
+          const [tx, ty] = dimLabelPos(lx, ly, edgeX, edgeY, triCentroid);
+          annotations.push({ x: tx, y: ty, text: `${dist.toFixed(0)}mm`, showarrow: false,
+            font: { size: 10, color: '#ff3b30', family: 'Arial Black' }, xanchor: 'center', yanchor: 'middle' });
         }
       }
     }
@@ -542,12 +541,10 @@
   // ====== 判据面板 (含 rw_pass) ======
   function renderVerdict(data) {
     const pass = data.mirrorPass;
-    const alertDiv = elVerdictDiv.querySelector('.alert');
-    alertDiv.className = 'alert verdict-panel py-3 px-3 mb-0 ' + (pass ? 'verdict-pass' : 'verdict-fail');
+    elVerdictDiv.className = 'alert alert-light verdict-panel py-3 px-3 mb-0 flex-grow-1 verdict-head-wrap ' + (pass ? 'verdict-pass' : 'verdict-fail');
     elVerdictCount.textContent = data.nHit + '/' + data.nTot;
-    elVerdictCount.className = 'mono me-1';
     elVerdictBadge.textContent = pass ? 'PASS' : 'FAIL';
-    elVerdictBadge.className = 'verdict-badge ' + (pass ? 'badge-pass' : 'badge-fail');
+    elVerdictBadge.className = 'verdict-badge-md ' + (pass ? 'badge-pass' : 'badge-fail');
     // rw_pass (后挡风穿透, 仅报告)
     if (data.rearWindowPass != null) {
       const rp = data.rearWindowPass;
@@ -555,16 +552,44 @@
       elRwBadge.className = 'rw-badge ' + (rp ? 'rw-pass' : 'rw-fail');
     }
 
+    // 镜片判定: 命中点显示镜面局部坐标 (lx, ly mm) — 直观反映交点在镜面哪个位置 (驾驶员判断余量)
+    // 未命中显示「未命中」+ 红色 (镜面交点不在反射区域内)
     let lines = '';
     if (data.lineDetails) {
       for (const ld of data.lineDetails) {
         const ok = ld.onMirror;
-        const lxLy = ld.lx != null ? `${ld.lx.toFixed(1)} / ${ld.ly.toFixed(1)} mm` : '—';
-        lines += `<span class="verdict-line ${ok ? 'ok' : 'no'}"><i class="dot"></i>` +
-                 `<b>${ld.eyeLabel}→${ld.endpointLabel}</b><s>${lxLy}</s></span>`;
+        let coord = '—';
+        if (ld.lx != null && ld.ly != null) {
+          coord = `(${ld.lx.toFixed(0)}, ${ld.ly.toFixed(0)}) mm`;
+        }
+        const status = ok ? '✓ 命中' : '✗ 未命中';
+        lines += `<div class="verdict-line-row ${ok ? 'ok' : 'no'}">` +
+                 `<span class="verdict-line-name">${ld.eyeLabel}→${ld.endpointLabel}</span>` +
+                 `<span class="verdict-line-info" style="color:${ok ? 'var(--pass)' : 'var(--fail)'}">${status}</span>` +
+                 `<span class="verdict-line-dist">${coord}</span>` +
+                 `</div>`;
       }
     }
     elVerdictLines.innerHTML = lines;
+    // 后挡风三线穿透明细 (镜片→镜面反射→后挡风透光区→眼点)
+    let rwLines = '';
+    if (data.lineDetails && data.rearWindow && data.rearWindow.centerLines) {
+      for (let i = 0; i < data.lineDetails.length; i++) {
+        const ld = data.lineDetails[i];
+        const cl = data.rearWindow.centerLines[i];
+        if (!cl) continue;
+        const through = cl.through === true;
+        const hit = !!cl.hit2D;
+        const cls = !hit ? 'no' : (through ? 'ok' : 'warn');
+        const status = !hit ? '✗ 未穿透' : (through ? `✓ 穿透 (距边 ${cl.dist != null ? cl.dist.toFixed(1) : '-'}mm)` : '✗ 未在透光区');
+        rwLines += `<span class="verdict-line ${cls}"><i class="dot"></i>` +
+                   `<b>${ld.eyeLabel}→${ld.endpointLabel}</b><s>${status}</s></span>`;
+      }
+    } else if (data.lineDetails) {
+      // 后挡风未提取/未配置 — 给出提示
+      rwLines = `<span class="verdict-line muted"><i class="dot"></i><b>后挡风轮廓未提取</b><s>参考判据不可用</s></span>`;
+    }
+    elVerdictRwLines.innerHTML = rwLines;
     let fail = '';
     if (data.failureDetails && data.failureDetails.length > 0) {
       fail = '<div class="verdict-fail-title">失败详情</div>';
@@ -604,11 +629,12 @@
     } catch (e) {
       console.error('[verify]', e);
       elLastAngles.textContent = `错误: ${e.message}`;
-      elVerdictDiv.querySelector('.alert').className = 'alert verdict-panel verdict-fail py-3 px-3 mb-0';
+      elVerdictDiv.className = 'alert alert-light verdict-panel verdict-fail py-3 px-3 mb-0 flex-grow-1';
       elVerdictCount.textContent = '-/-';
       elVerdictBadge.textContent = 'ERROR';
-      elVerdictBadge.className = 'verdict-badge badge-fail';
+      elVerdictBadge.className = 'verdict-badge-md badge-fail';
       elVerdictLines.innerHTML = '';
+      elVerdictRwLines.innerHTML = '';
       elVerdictFailures.innerHTML = `<div class="verdict-fail-item">错误: ${e.message}</div>`;
       // 清空旧图, 防止 ERROR 时残留上次结果误导
       if (typeof Plotly !== 'undefined') {
@@ -1818,10 +1844,11 @@
       set('ext-gr', d.ground.rear_mid.map(v => v.toFixed(4)).join(', '));
       set('ext-w-near', d.regulation.width_near); set('ext-d-near', d.regulation.dist_near);
       set('ext-w-far', d.regulation.width_far); set('ext-d-far', d.regulation.dist_far);
-      $('ext-badge-left').textContent = '左 --'; $('ext-badge-left').className = 'verdict-badge';
-      $('ext-badge-right').textContent = '右 --'; $('ext-badge-right').className = 'verdict-badge';
+      $('ext-badge-left').textContent = '左 --'; $('ext-badge-left').className = 'verdict-badge-md';
+      $('ext-badge-right').textContent = '右 --'; $('ext-badge-right').className = 'verdict-badge-md';
       $('ext-verdict-detail').textContent = '点击校核';
-      $('ext-verdict-edges').innerHTML = ''; $('ext-verdict-fit').textContent = ''; $('ext-auto-status').textContent = '';
+      $('ext-verdict-edges-left').innerHTML = ''; $('ext-verdict-edges-right').innerHTML = '';
+      $('ext-verdict-fit').textContent = ''; $('ext-auto-status').textContent = '';
       $('ext-status').textContent = '';
       // 折叠头摘要 (SR / 球心 / 眼距)
       const esum = $('ext-params-summary');
@@ -1948,7 +1975,7 @@
     try {
       const r = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: extCurrentPath || '', psi, theta }),
+        body: JSON.stringify({ path: extCurrentPath || '', psi, theta, search: false }),
       });
       const d = await r.json();
       if (!d.ok) throw new Error(d.error);
@@ -1965,7 +1992,7 @@
     try {
       const r0 = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: extCurrentPath || '', psi: 0 }),
+        body: JSON.stringify({ path: extCurrentPath || '', psi: 0, search: true }),
       });
       const d0 = await r0.json();
       if (!d0.ok) throw new Error(d0.error);
@@ -1982,7 +2009,7 @@
       $('ext-theta').value = bestTheta;
       const r1 = await fetch('api/exterior/verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: extCurrentPath || '', psi: bestPsi, theta: bestTheta }),
+        body: JSON.stringify({ path: extCurrentPath || '', psi: bestPsi, theta: bestTheta, search: false }),
       });
       const d1 = await r1.json();
       if (!d1.ok) throw new Error(d1.error);
@@ -1993,35 +2020,39 @@
   }
 
   function renderExtVerdict(d) {
-    const mk = (ok) => `<span style="color:${ok ? '#34c759' : '#ff3b30'}">${ok ? '✓' : '✗'}</span>`;
     const side = (s, r) => {
       const b = $('ext-badge-' + s);
       b.textContent = (s === 'left' ? '左 ' : '右 ') + (r.mirrorPass ? 'PASS' : 'FAIL');
-      b.className = 'verdict-badge ' + (r.mirrorPass ? 'badge-pass' : 'badge-fail');
+      b.className = 'verdict-badge-md ' + (r.mirrorPass ? 'badge-pass' : 'badge-fail');
     };
     side('left', d.left); side('right', d.right);
-    $('ext-verdict-detail').textContent = `ψ=${d.psi != null ? d.psi : 0}° θ=${d.theta != null ? d.theta : 0}° · ${d.left.mirrorPass && d.right.mirrorPass ? '两镜均通过' : (d.left.search.found || d.right.search.found ? '±3° 内有解' : '±3° 内无解')}`;
+    const hasSearch = (s) => s.search && s.search.found;
+    $('ext-verdict-detail').textContent = `ψ=${d.psi != null ? d.psi : 0}° θ=${d.theta != null ? d.theta : 0}° · ${d.left.mirrorPass && d.right.mirrorPass ? '两镜均通过' : (hasSearch(d.left) || hasSearch(d.right) ? '±3° 内有解' : (d.left.search == null ? '自动搜角可查' : '±3° 内无解'))}`;
 
-    // 简洁判定: 每镜一行, 说明近/远场是否满足 + 最小安全距离
-    const zoneLine = (label, r) => {
-      const near = r.nearPass
-        ? `<span style="color:#34c759">近场 ✓ 满足 (最近 ${r.nearMinMargin != null ? r.nearMinMargin.toFixed(1) : '-'}mm > 3mm)</span>`
-        : `<span style="color:#ff3b30">近场 ✗ 不足 (最近 ${r.nearMinMargin != null ? r.nearMinMargin.toFixed(1) : '-'}mm < 3mm)</span>`;
-      const far = r.farPass
-        ? `<span style="color:#34c759">远场 ✓ 满足 (最近 ${r.farMinMargin != null ? r.farMinMargin.toFixed(1) : '-'}mm > 3mm)</span>`
-        : `<span style="color:#ff3b30">远场 ✗ 不足 (最近 ${r.farMinMargin != null ? r.farMinMargin.toFixed(1) : '-'}mm < 3mm)</span>`;
-      const adj = r.search.found
-        ? `<span style="color:#34c759">±3° ✓ (${r.search.bestPsi}°)</span>`
-        : `<span style="color:#ff3b30">±3° ✗ 无解</span>`;
-      return `<div style="font-size:12px;line-height:1.8"><b>${label}</b>: ${near} · ${far} · ${adj}</div>`;
+    // 行式判定: 每镜两行 (近场/远场)
+    const zoneRow = (label, pass, marginMm) => {
+      const cls = pass ? 'ok' : 'no';
+      const sign = pass ? '✓' : '✗';
+      const color = pass ? 'var(--pass)' : 'var(--fail)';
+      const margin = marginMm != null ? `${marginMm.toFixed(1)} mm` : '—';
+      return `<div class="verdict-line-row ${cls}">` +
+             `<span class="verdict-line-name">${label}</span>` +
+             `<span class="verdict-line-info" style="color:${color}">${sign} ${pass ? '满足' : '不足'}</span>` +
+             `<span class="verdict-line-dist">${margin}</span>` +
+             `</div>`;
     };
-    $('ext-verdict-edges').innerHTML = zoneLine('左', d.left) + zoneLine('右', d.right);
+    $('ext-verdict-edges-left').innerHTML =
+      zoneRow('近场 1m', d.left.nearPass, d.left.nearMinMargin) +
+      zoneRow('远场 4m', d.left.farPass, d.left.farMinMargin);
+    $('ext-verdict-edges-right').innerHTML =
+      zoneRow('近场 1m', d.right.nearPass, d.right.nearMinMargin) +
+      zoneRow('远场 4m', d.right.farPass, d.right.farMinMargin);
     // 数据质量: 拟合球心 vs 供应商 (各字段可能为 null, 防御 toFixed/toExponential 崩溃)
     const fmtC = (v) => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? x.toFixed(3) : '-').join(',') : '-';
     const fmtE = (v) => Number.isFinite(v) ? v.toExponential(0) : '-';
     const fmtD = (cc) => (cc && Number.isFinite(cc.devMm)) ? cc.devMm.toFixed(1) : '-';
-    const fitLine = (label, r) => `<div class="mono" style="font-size:11px;color:#9a9aa0;line-height:1.6"><b>${label}</b> 球心[${fmtC(r.fit && r.fit.center)}] 残差${fmtE(r.fit && r.fit.residualMm)}mm 交叉✓(${fmtD(r.fit && r.fit.crossCheck)}mm)</div>`;
-    $('ext-verdict-fit').innerHTML = fitLine('左', d.left) + fitLine('右', d.right);
+    const fitLine = (label, r) => `<span class="mono" style="font-size:11px;color:#9a9aa0;line-height:1.6"><b>${label}</b> 球心[${fmtC(r.fit && r.fit.center)}] 残差${fmtE(r.fit && r.fit.residualMm)}mm 交叉✓(${fmtD(r.fit && r.fit.crossCheck)}mm)</span>`;
+    $('ext-verdict-fit').innerHTML = fitLine('左', d.left) + ' &nbsp; ' + fitLine('右', d.right);
   }
 
   // 轮廓内偏移 3mm 安全线 (法规: 视野线到边缘安全距离 > 3mm)
