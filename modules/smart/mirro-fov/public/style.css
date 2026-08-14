@@ -84,8 +84,117 @@ h4, .h4 {
   border-radius: 12px !important;
   background: var(--surface) !important;
   box-shadow: 0 1px 2px rgba(0,0,0,.03);
-  min-height: 0;
+  min-height: 230px;       /* 等于右侧角度卡自然高度 (2 输入 + 2 按钮 + 状态), 保证左右卡片高度一致 */
+  display: flex;
+  flex-direction: column;
 }
+
+/* 第一眼: 核心判定 (大徽章 + 法规 + 已校核) */
+.verdict-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.verdict-summary-body { flex: 1; min-width: 0; }
+.verdict-summary-rule { font-size: 13px; color: var(--ink); font-weight: 600; }
+.verdict-summary-count { font-size: 14.5px; color: var(--ink); margin-top: 2px; }
+.verdict-badge-lg {
+  flex: none;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-family: var(--mono);
+  border: 1px solid;
+}
+.badge-pass { color: var(--pass); border-color: rgba(52,199,89,.5); background: var(--pass-bg); }
+.badge-fail { color: var(--fail); border-color: rgba(255,59,48,.45); background: var(--fail-bg); }
+.verdict-badge-lg.badge-pass { color: var(--pass); border-color: rgba(52,199,89,.5); background: var(--pass-bg); }
+.verdict-badge-lg.badge-fail { color: var(--fail); border-color: rgba(255,59,48,.45); background: var(--fail-bg); }
+
+/* 第二眼: 双栏 (镜片判定 + 后挡风判定) */
+.verdict-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 16px;
+  margin-top: 12px;
+}
+.verdict-two-col .verdict-grid { position: relative; align-items: start; }
+/* 中间竖虚线分隔 (双栏彻底化, 从顶部到底部贯通两栏) */
+.verdict-two-col .verdict-grid::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 50%;
+  border-left: 1px dashed var(--hairline);
+}
+.verdict-col { min-width: 0; padding-left: 16px; }
+.verdict-col:first-child { padding-left: 0; padding-right: 16px; }
+.verdict-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  margin-bottom: 6px;
+  min-height: 28px;          /* 统一两栏标题行高度, 避免 PASS 徽章偏大撑高 col-head */
+}
+.verdict-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.verdict-badge-md {
+  flex: none;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-family: var(--mono);
+  border: 1px solid;
+}
+
+/* 镜片判定: 每行一个 5 线分项 (名称 + 状态 + 距离) — 三列等宽对齐 */
+.verdict-line-row {
+  display: grid;
+  grid-template-columns: 64px 1fr 72px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  padding: 3px 0;
+  color: var(--ink);
+}
+.verdict-line-row .verdict-line-name {
+  font-weight: 650;
+  color: var(--ink);
+  font-family: var(--mono);
+}
+.verdict-line-row .verdict-line-info {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.verdict-line-row .verdict-line-dist {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.verdict-line-row.ok .verdict-line-dist { color: var(--pass); }
+.verdict-line-row.no .verdict-line-name { color: var(--fail); }
+.verdict-line-row.no .verdict-line-dist { color: var(--fail); }
+.verdict-line-row.muted .verdict-line-info { color: var(--faint); }
 
 .verdict-head { display: flex; align-items: center; gap: 18px; }
 
@@ -110,7 +219,7 @@ h4, .h4 {
 
 .verdict-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
 .verdict-rule { font-weight: 650; font-size: 14.5px; letter-spacing: .01em; }
-#verdict-count { font-size: 19px; font-weight: 700; color: var(--ink); }
+#verdict-count { font-size: 12.5px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
 .verdict-spec { font-size: 12px; color: var(--faint); }
 /* 校核状态: 面板标题行内的小灰字, 靠右, 不占独立行 */
 .verdict-status {
@@ -141,6 +250,8 @@ h4, .h4 {
 .verdict-line .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .verdict-line.ok { color: var(--pass); }
 .verdict-line.no { color: var(--fail); }
+.verdict-line.warn { color: #ff9f0a; }   /* 后挡风: 穿透但不在透光区 */
+.verdict-line.muted { color: var(--faint); }
 .verdict-line b { font-weight: 600; color: var(--ink); }
 .verdict-line s {
   text-decoration: none;
@@ -149,6 +260,25 @@ h4, .h4 {
   font-variant-numeric: tabular-nums;
   font-size: 11.5px;
 }
+
+/* 分镜面板: 镜片判定 + 后挡风判定 两段 */
+.verdict-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.verdict-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.verdict-section-title {
+  font-weight: 650;
+  font-size: 13px;
+  color: var(--ink);
+}
+.verdict-rw-lines { border-top: none !important; padding-top: 0 !important; margin-top: 6px !important; }
 
 .verdict-fail-title { margin-top: 10px; font-weight: 650; font-size: 12.5px; color: var(--fail); }
 .verdict-fail-item { font-size: 12.5px; color: var(--fail); margin-top: 3px; }
