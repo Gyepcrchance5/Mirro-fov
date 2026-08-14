@@ -760,11 +760,12 @@ router.post('/api/exterior/verify', jsonParser, (req, res) => {
     const body = req.body || {};
     const psi = Number.isFinite(body.psi) ? body.psi : 0;
     const theta = Number.isFinite(body.theta) ? body.theta : 0;
+    const search = body.search === true; // 默认 false: 只做当前角度校核; 显式 true 才做二维搜索
     // 路径越界校验 (同 /api/exterior/config: exterior 目录 / tmp 提取目录)
     if (body.path && !isAllowedExteriorPath(body.path)) {
       return res.status(400).json({ ok: false, error: '路径越界, 只能读取 exterior/tmp 目录' });
     }
-    const result = verifyExteriorBoth(body.path || '', { psi, theta });
+    const result = verifyExteriorBoth(body.path || '', { psi, theta, search });
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(400).json({ ok: false, error: friendlyError(e) });

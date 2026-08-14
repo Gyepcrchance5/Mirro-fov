@@ -601,3 +601,116 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 
 ## 执行顺序
 12.1 → 12.2 → 12.3 → 12.4 → 验收。
+
+---
+
+# 阶段 14 — 校核页布局优化 (判据面板 + 角度卡同行)
+
+> 用户反馈: 镜面角度卡(常驻)独占一整列(max-width:320px)右侧空白浪费; 坐标提示条(coord-bar)单独一行是否必要。想法: 把角度卡和 PASS 判据卡放同一行。
+
+## 现状
+内镜 inner-page + 外镜 exterior-page 布局一致:
+- coord-bar (坐标提示条) 单独一行
+- verdict (判据面板 PASS/FAIL) 单独一块
+- param-row > col (镜面角度/调节角度卡, max-width:320px) 独占满宽 row, 右侧空白
+- 折叠区 + 投影图
+
+## 目标布局
+```
+顶栏
+┌─────────────────────────────────────────────────────┐
+│ 判据面板 (PASS/FAIL + 五线/左右徽章)   │ 角度卡      │  ← 同一行
+│ flex-grow-1 占主体                    │ ~300px 固定  │
+└─────────────────────────────────────────────────────┘
+参数详情折叠头 + 折叠区
+投影图
+```
+- 去掉 coord-bar 独立行, 坐标说明合并进判据面板(小字)
+- 判据面板 + 角度卡用 flex 同行, 判据面板 flex-grow 占主体, 角度卡右侧固定宽
+
+## 实现
+
+### 14.1 index.html (inner-page + exterior-page)
+- **删 coord-bar**: 两个页面的 `<div class="coord-bar">` 整段删除
+- **判据面板 + 角度卡合并一行**: 用外层 flex 容器包裹 verdict + 角度卡:
+  - 内镜: `<div class="d-flex gap-2 mb-2 align-items-stretch">` 包 `#verdict`(flex-grow-1) + 镜面角度卡(col → 独立 card)
+  - 外镜: 同样包 `#ext-verdict` + 调节角度卡
+  - 角度卡从 `param-row > col` 里**移出**, 改为独立 `<div class="card" style="width:300px;flex:none">` 放 flex 容器右侧
+  - verdict 的 `mb-2` 去掉(现在在 flex 容器里), 角度卡 `h-100` 保证等高
+- **坐标说明合并进判据面板**: 在 verdict-title 的 verdict-spec 后追加 `<span class="text-muted small">· 整车坐标系 (X+后 Y+右 Z+上) · mm</span>`(内镜) / 外镜同理
+- **param-row 清空**: 原来的 `#param-row` / `#ext-param-row` 只剩角度卡, 移出后该 row 删掉(角度卡已在新 flex 容器)
+
+### 14.2 约束
+1. 不改 engine/、routes.js、app.js 的 JS 逻辑(只动 HTML 结构 + 可能 style.css)
+2. **所有 input id 不变**(yaw/pitch/ext-psi/ext-theta/verify-btn 等), JS 引用不受影响
+3. 判据面板内容(verdict-lines/verdict-failures/ext-verdict-edges 等)不动
+4. 折叠区不动
+
+## 验收
+- 内镜页: 判据面板 + 镜面角度卡同行, 角度卡右侧固定宽, 无右侧空白; 坐标说明在判据面板内(非独立行)
+- 外镜页: 同样
+- 校核功能正常(改角度 → 校核 → 判定), 角度卡输入框/按钮都在
+- `node -c public/app.js` 通过; npm test 166 全绿(未改引擎, 应不变)
+- 浏览器目视: 布局合理, 无空间浪费
+
+## 关键文件
+- public/index.html — inner-page + exterior-page 布局重构
+- public/style.css — (如需要) 判据面板内坐标小字样式
+
+---
+
+# 阶段 15 — 外镜校核性能优化 (search 分离)
+
+> 用户反馈: 外镜校核页加载慢 + 调角度视图慢一步。根因: /api/exterior/verify 每次做二维搜索 searchExteriorAngles(13×13=169 档), 每档跑一次 verifyExterior, 左+右共 340 次, 总 4 秒。调角度/打开页面都触发这个搜索, 但其实只需要当前角度的校核。
+
+## 现状
+- verifyOne 每次都做 searchExteriorAngles(二维 169 档) + verifyExterior(当前角度)
+- verifyExteriorBoth 左+右 = 340 次 verifyExterior ≈ 4 秒
+- doExtVerify(校核) 和 doExtAuto(自动搜角) 都调 verify, 都触发 search
+- 实测: verifyExteriorBoth 4090ms; 仅当前角度校核(不 search)约 24ms(快 170 倍)
+
+## 优化方案
+search 从 verify 分离: verify 默认只做当前角度校核(快), 自动搜角时才做二维搜索(慢但主动触发)。
+
+## 实现
+
+### 15.1 api-verify.js
+- verifyOne 加 `search = false` 选项:
+  - search=false(默认): 不做 searchExteriorAngles, 返回 `search: null`
+  - search=true: 做 searchExteriorAngles, 返回 search 结果(现状)
+- verifyExteriorBoth 透传 search 选项
+
+### 15.2 routes.js /api/exterior/verify
+- 读 `body.search`(bool, 默认 false), 传 verifyExteriorBoth({ psi, theta, search })
+
+### 15.3 app.js
+- **doExtVerify**: 传 `search: false`(快, 只做当前角度校核)
+- **doExtAuto**: 
+  - 第一次 verify 传 `search: true`(做二维搜索拿 commonSearch)
+  - 第二次 verify(应用 bestPsi/bestTheta) 传 `search: false`(快)
+- **renderExtVerdict**: 处理 search 为 null 的情况:
+  - `r.search == null` → 不显示"±3° 有解/无解", 改为显示"自动搜角可查"(或省略)
+  - `r.search` 有值 → 保持现状显示
+  - 同样处理 ext-verdict-detail 里的 `d.left.search.found`(search 为 null 时不能读 .found)
+
+### 15.4 可选: searchExteriorAngles 步长优化
+- step 0.5 → 1.0(169 档 → 49 档), 自动搜角也更快。但会降低搜索精度, 暂不做(先做 search 分离)。
+
+## 约束
+1. 不改 engine/exterior-mirror.js(verifyExterior/searchExteriorAngles 逻辑不动)。
+2. 改 api-verify.js + routes.js + app.js。
+3. search 默认 false 向后兼容: 现有不传 search 的调用变为快(不做 search)。
+4. npm test 全绿(verifyExterior/searchExteriorAngles 逻辑未动, 断言应不变)。
+
+## 验收
+- verifyExteriorBoth(path, {psi:0, theta:0}) 耗时从 ~4s 降到 ~30ms(search=false 时)
+- verifyExteriorBoth(path, {psi:0, theta:0, search:true}) 仍 ~4s(二维搜索保留)
+- 打开外镜页 + 调角度: 明显变快(只做当前角度校核)
+- 自动搜角: 仍能搜到 bestPsi/bestTheta 并应用(二维搜索只在此时做)
+- 判定面板: search 为 null 时不报错, 正常显示
+- npm test 全绿
+
+## 关键文件
+- engine/exterior/api-verify.js — verifyOne 加 search 选项
+- routes.js — /api/exterior/verify 读 body.search
+- public/app.js — doExtVerify/doExtAuto 传 search + renderExtVerdict 处理 null

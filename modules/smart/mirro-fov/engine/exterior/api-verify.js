@@ -72,7 +72,7 @@ function raysFromEdge(eye, tri, n, mirror) {
 
 /** 单镜校核 (内部) */
 function verifyOne(side, raw, opts = {}) {
-  const { psi = 0, theta = 0, samplePerEdge = 20, minMarginMm = 3.0 } = opts;
+  const { psi = 0, theta = 0, samplePerEdge = 20, minMarginMm = 3.0, search: doSearch = false } = opts;
   const mir = raw[`exterior_mirror_${side}`];
   const eyeCenter = raw.driver.eye_center;
   const eyes = { left: raw.driver.eye_left_raw, right: raw.driver.eye_right_raw };
@@ -89,7 +89,10 @@ function verifyOne(side, raw, opts = {}) {
 
   const v = verifyExterior(eyes, doorOuterY, ground, mirror, { samplePerEdge, minMarginMm, regulation });
   const tris = buildTriangles(eyeCenter, doorOuterY, ground, mirror, regulation);
-  const search = searchExteriorAngles(eyes, doorOuterY, ground, mirror, { step: 0.5, range: 3.0, regulation });
+  // search=false(默认): 只做当前角度校核, 不做二维搜索 (快); search=true: 做二维搜索拿可调窗口
+  const search = doSearch
+    ? searchExteriorAngles(eyes, doorOuterY, ground, mirror, { step: 0.5, range: 3.0, regulation })
+    : null;
 
   return { side, fit, gate, mirror, v, tris, search, mir, eyeCenter, eyes, doorOuterY, ground, regulation, projOutline };
 }
@@ -176,31 +179,35 @@ function verifyExteriorBoth(p, opts = {}) {
       farMinMargin: farMin === null ? null : r4(farMin),
       nearEdges: r.v.near.edges.map(e => ({ name: e.name, pass: e.pass, visible: e.samples.filter(s => s.visible).length + '/' + e.samples.length })),
       farEdges: r.v.far.edges.map(e => ({ name: e.name, pass: e.pass, visible: e.samples.filter(s => s.visible).length + '/' + e.samples.length })),
-      search: {
+      search: r.search ? {
         found: r.search.found,
         bestPsi: r.search.bestPsi,
         bestTheta: r.search.bestTheta ?? null,
         window: r.search.results.filter(x => x.mirrorPass).map(x => x.psi),
         window2D: r.search.results.filter(x => x.mirrorPass).map(x => ({ psi: x.psi, theta: x.theta ?? null })),
         results: r.search.results,
-      },
+      } : null,
       fit: { method: r.fit.method, center: r4v(r.fit.center), radius: r4(r.fit.radius), residualMm: r4(r.fit.fitResidualMm),
         crossCheck: cc ? { ok: cc.ok, devMm: r4(cc.devMm) } : null, gate: { ok: r.gate.ok, maxDevMm: r4(r.gate.maxDevMm) } },
     };
   }
 
   // 共同窗口: 同一 (psi, theta) 使两镜都过 (二维交集; 单轴退化时 theta=null, 交集退化为 psi 交集)
-  const key = x => `${x.psi},${x.theta ?? null}`;
-  const Lpass = new Set(L.search.results.filter(x => x.mirrorPass).map(key));
-  const commonPairs = R.search.results.filter(x => x.mirrorPass && Lpass.has(key(x)))
-    .map(x => ({ psi: x.psi, theta: x.theta ?? null }));
-  const commonSearch = {
-    found: commonPairs.length > 0,
-    bestPsi: commonPairs[0] ? commonPairs[0].psi : null,
-    bestTheta: commonPairs[0] ? commonPairs[0].theta : null,
-    window: [...new Set(commonPairs.map(x => x.psi))],
-    pairs: commonPairs,
-  };
+  // search=false 时两侧 search 均为 null, commonSearch 也置 null (前端据此显示"自动搜角可查")
+  let commonSearch = null;
+  if (L.search && R.search) {
+    const key = x => `${x.psi},${x.theta ?? null}`;
+    const Lpass = new Set(L.search.results.filter(x => x.mirrorPass).map(key));
+    const commonPairs = R.search.results.filter(x => x.mirrorPass && Lpass.has(key(x)))
+      .map(x => ({ psi: x.psi, theta: x.theta ?? null }));
+    commonSearch = {
+      found: commonPairs.length > 0,
+      bestPsi: commonPairs[0] ? commonPairs[0].psi : null,
+      bestTheta: commonPairs[0] ? commonPairs[0].theta : null,
+      window: [...new Set(commonPairs.map(x => x.psi))],
+      pairs: commonPairs,
+    };
+  }
 
   return {
     path: p || path.join(EXTERIOR_DIR, 'exterior-vehicle-draft.json'),
