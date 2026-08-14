@@ -6,32 +6,31 @@
 
 ### 内后视镜（I 类 · 平面镜）
 
+- **整车 STEP 自动提取** — 上传一个整车 STEP, 自动提取镜面轮廓/球铰/镜心/眼点/地面/后挡风 + yaw/pitch
 - **五线法主判据** — 5 条射线全命中反射面 → PASS
 - **镜中法规线倒影** — 60m 处 ±10m 地平线在镜面上的投影曲线
 - **后挡风穿透** — 参考判据（仅报告不判定）
 - **自动搜角** — 两阶段网格搜索 yaw/pitch
 - **车型 CRUD** — 保存 / 另存 / 删除
-- **3DE 数据读取** — CATIA COM 选点 → 自动填表
-- **STEP 轮廓解析** — 从 STEP 文件提取真实反射面边界（顶点锚定 + 自检闸门）
 
 ### 外后视镜（III 类 · 凸球面镜）
 
+- **整车 STEP 自动提取** — 上传一个整车 STEP, 自动提取球面/轮廓/球心/R + 旋转轴 (AXIS2_PLACEMENT_3D) + 6 命名点
 - **球面轮廓拟合** — 共面/非共面双路径自动检测 + 供应商球心交叉校核
 - **精确球面反射** — 二次方程闭式解 + 全球面扫描求根
 - **双眼交集判据** — GB 15084 双眼反射点都在镜面内 + 安全距离 ≥3mm
 - **地面三角视野区** — 近场 1m@眼后4m / 远场 4m@眼后20m
-- **±3° 旋转调节搜索** — 绕转向器轴线网格扫描
-- **2D 反射面投影** — 左/右镜面 UV 投影图 + 缩放诊断
-- **3DE 数据读取** — 轮廓批量选点 + 轴线 + SR
+- **二维调节搜索** — 上下(ψ) + 左右(θ)各 ±3°, 符合法规「初始不满足可调节后校核」
+- **2D 反射面投影** — 左/右镜面 UV 投影图
 
 ## 🏗️ 技术栈
 
 | 层 | 技术 | 说明 |
 |---|---|---|
-| 计算引擎 | 纯 JavaScript | 零外部依赖，155 断言全绿 |
+| 计算引擎 | 纯 JavaScript | 零外部依赖，166 断言全绿 |
 | Web 服务 | Express.js | REST API + 静态文件托管 |
 | 前端 | Bootstrap 5 + Plotly.js | Apple 冷白设计系统 |
-| 3DE 接入 | Python + pywin32 | COM 选点 + STEP 文件解析 |
+| STEP 提取 | Python + numpy | 一个整车 STEP 全自动提取参数 |
 | 数据 | JSON | 整车坐标系，米制 |
 
 ## 📁 目录结构
@@ -71,8 +70,7 @@ mirro-fov-js/
 ### 环境要求
 
 - **Node.js** v16+
-- （可选）**Python** 3.11+ + `pip install -r python/requirements.txt` — 3DE 读取功能
-- （可选）**3DEXPERIENCE** 已启动登录 — CATIA COM 选点
+- **Python** 3.8+ + `pip install -r python/requirements.txt`（numpy）— STEP 全自动提取（新建车型必装）
 
 ### 安装
 
@@ -94,7 +92,7 @@ npm start
 
 ```bash
 npm test
-# 155 断言 (内镜 49 + 外镜 55 + 球面拟合 51)
+# 166 断言 (内镜 49 + 外镜 66 + 球面拟合 51)
 ```
 
 ## 📊 校核判据
@@ -118,17 +116,18 @@ npm test
 - 三角形三边（AB/BT/TA）采样 20 点，双眼反射点都在镜面内 + margin ≥3mm → 可见
 - 近场 + 远场全部可见 → PASS
 
-## 🔧 3DE 数据接入
+## 🔧 STEP 数据接入
 
-三种模式，按需使用：
+新建车型时上传一个整车 STEP,系统自动提取全部校核参数:
 
-| 模式 | 命令 | 用途 |
-|---|---|---|
-| 内镜选点 | `python -m mirror_fov.catia_extract` | COM 逐个选点（pivot/眼点/地面/后挡风） |
-| 外镜批量 | `python -m mirror_fov.catia_extract --mode exterior` | COM 选轮廓点 + 轴线 + SR 手输 |
-| STEP 解析 | `python -m mirror_fov.catia_extract --mode step-curve --step-file <file> --curve-ids <ids>` | 纯 Python 解析 STEP 文件 B 样条 |
+| 脚本 | 用途 |
+|---|---|
+| `step_exterior_extract.py` | 外镜:球面/轮廓/球心/R 几何识别 + 旋转轴 AXIS2_PLACEMENT_3D + 6 命名点 |
+| `step_interior_extract.py` | 内镜:镜片面/后挡风命名识别 + 球铰/镜心命名点 + yaw/pitch SVD 推导 |
 
-> **STEP 方案**：3DE COM 不支持曲线采样（三轮探测确认），改为导出 STEP 文件后用纯 Python + numpy 解析。`step_topology.py` 可自动识别反射面边界，无需手动指定曲线 ID。
+供应商需按 [docs/supplier-step-annotation-spec.md](modules/smart/mirro-fov/docs/supplier-step-annotation-spec.md) 在 STEP 里标注点/面命名,即可全自动提取。命名缺失时退化为坐标启发式(仅适用本车型)。
+
+> **3DE 选点**（`python -m mirror_fov.catia_extract`）为遗留方案,已从前端隐藏,STEP 自动提取是主要方式。
 
 ## 📐 坐标系
 

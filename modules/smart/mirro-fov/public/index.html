@@ -376,11 +376,9 @@
               <input type="text" class="form-control form-control-sm" value="外后视镜 (III 类)" readonly>
             </div>
 
-            <div class="wizard-divider"></div>
-
             <!-- 上传整车 STEP -->
-            <div class="wizard-section">
-              <div class="wizard-section-title">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></div>
+            <div class="wizard-field">
+              <label class="wizard-label">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
               <input id="wiz-ext-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
               <div class="wizard-actions">
                 <button id="wiz-ext-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
@@ -401,43 +399,6 @@
                 </div>
               </div>
             </div>
-
-            <div class="wizard-divider"></div>
-
-            <!-- 轴线录入 -->
-            <div class="wizard-section">
-              <div class="wizard-section-title">旋转轴方向 <span class="wizard-tag wizard-tag-required">必填</span></div>
-              <div class="wizard-actions wizard-actions-head">
-                <button id="wiz-ext-catia-btn" class="btn btn-solid btn-sm">从 3DE 读取</button>
-                <span class="wizard-result">或手动输入旋转轴方向 (整车坐标)</span>
-              </div>
-              <div class="row g-2 wizard-points">
-                <div class="col-md-6 col-12">
-                  <div class="card shadow-sm h-100">
-                    <div class="card-header py-1 px-2"><div class="card-title mb-0">左镜旋转轴方向</div></div>
-                    <div class="card-body py-2 px-2">
-                      <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="wiz-ext-axis-L-x" type="number" step="any" class="form-control form-control-sm" value="0"></div>
-                      <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="wiz-ext-axis-L-y" type="number" step="any" class="form-control form-control-sm" value="1"></div>
-                      <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="wiz-ext-axis-L-z" type="number" step="any" class="form-control form-control-sm" value="0"></div>
-                      <div class="text-muted mt-2" style="font-size:10px" id="wiz-ext-axis-hint-L"></div>
-                    </div>
-                  </div>
-                </div>
-                <div class="col-md-6 col-12">
-                  <div class="card shadow-sm h-100">
-                    <div class="card-header py-1 px-2"><div class="card-title mb-0">右镜旋转轴方向</div></div>
-                    <div class="card-body py-2 px-2">
-                      <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="wiz-ext-axis-R-x" type="number" step="any" class="form-control form-control-sm" value="0"></div>
-                      <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="wiz-ext-axis-R-y" type="number" step="any" class="form-control form-control-sm" value="1"></div>
-                      <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="wiz-ext-axis-R-z" type="number" step="any" class="form-control form-control-sm" value="0"></div>
-                      <div class="text-muted mt-2" style="font-size:10px" id="wiz-ext-axis-hint-R"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="wizard-divider"></div>
 
             <!-- 提取摘要 -->
             <div class="wizard-field">
@@ -477,11 +438,9 @@
               <input type="text" class="form-control form-control-sm" value="内后视镜 (I 类, 平面镜)" readonly>
             </div>
 
-            <div class="wizard-divider"></div>
-
             <!-- 上传整车 STEP -->
-            <div class="wizard-section">
-              <div class="wizard-section-title">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></div>
+            <div class="wizard-field">
+              <label class="wizard-label">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
               <input id="wiz-int-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
               <div class="wizard-actions">
                 <button id="wiz-int-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
@@ -744,7 +703,7 @@
 
   </div>
 
-  <script src="app.js?v=20260813g"></script>
+  <script src="app.js?v=20260813h"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>

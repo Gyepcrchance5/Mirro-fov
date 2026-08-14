@@ -25,25 +25,27 @@
 ### 工作流
 
 - **动作优先**：入口分"校核已有车型"（绿=已有数据）与"新建车型"（蓝=从零创建）
-- **新建车型向导**（内镜）：基本信息 → STEP 轮廓提取 → 后挡风轮廓（可选）→ 点坐标（3DE 或手输）→ 参数保存并校核
-- **STEP 提取公共层**：顶点锚定采样 + 自检闸门（连续闭合/无飞线/跨度合理）+ 半模镜像，内镜/外镜/后挡风统一
+- **新建车型向导**（内外镜统一）：上传一个整车 STEP → 自动提取全部参数 → 预览确认 → 保存并校核
+- **供应商 STEP 规范**：按 `docs/supplier-step-annotation-spec.md` 标注点/面命名，即可全自动提取
 
 ### 内后视镜（I 类平面镜）
 
+- 整车 STEP 自动提取（镜面轮廓/球铰/镜心/眼点/地面/后挡风 + yaw/pitch）
 - 五线法主判据（5/5 → PASS）
 - 镜中法规线倒影可视化
 - 后挡风穿透参考判据
 - 两阶段自动搜角（yaw/pitch）
-- 车型CRUD + 3DE 参数读取
+- 车型CRUD
 
 ### 外后视镜（III 类凸球面镜）
 
+- 整车 STEP 自动提取（球面/轮廓/球心/R + 旋转轴 + 6 命名点）
 - 球面轮廓拟合（共面/非共面双路径自动检测）
 - 供应商球心交叉校核 + 一致性闸门
 - 精确球面反射解算（全球面扫描+二分）
 - 双眼交集判据（GB 15084）
 - 地面三角视野区校核（near + far）
-- ±3° 旋转轴调节搜索
+- 二维调节搜索（上下 ψ + 左右 θ 各 ±3°）
 - 2D 反射面投影可视化
 
 ---
@@ -88,9 +90,12 @@ app.use('/mirro-fov', moduleAuth('mirro-fov'), mirroFovRoutes);
 | /api/auto-search | POST | 两阶段自动搜角 |
 | /api/vehicles/save | POST | 保存车型 |
 | /api/vehicles/delete | POST | 删除车型 |
-| /api/vehicles/save-outline | POST | 保存 STEP 提取的轮廓文件 |
-| /api/step/upload | POST | STEP 上传提取（原始二进制，需 Python + numpy） |
-| /api/catia | POST | 3DE 读取（需本机 Python + CATIA） |
+| /api/step/upload | POST | 内镜 STEP 上传提取（流式，需 Python + numpy） |
+| /api/interior/extract | POST | 内镜整车 STEP 一键提取 |
+| /api/interior/extract/progress | GET | 内镜提取进度轮询 |
+| /api/interior/extract/retry | POST | 内镜提取重试（不重传文件） |
+| /api/interior/save | POST | 内镜车型保存（原子写） |
+| /api/catia | POST | 3DE 读取（遗留，前端已隐藏） |
 | /api/catia/available | GET | 3DE 可用性检测 |
 
 ### 外镜 API
@@ -99,7 +104,12 @@ app.use('/mirro-fov', moduleAuth('mirro-fov'), mirroFovRoutes);
 |------|------|------|
 | /api/exterior/vehicles | GET | 车型列表 |
 | /api/exterior/config?path= | GET | 车型配置 |
-| /api/exterior/verify | POST | 双镜合并校核（含 2D 投影 viz） |
+| /api/exterior/verify | POST | 双镜合并校核（二维 psi+theta，含 2D 投影 viz） |
+| /api/exterior/extract | POST | 外镜整车 STEP 一键提取 |
+| /api/exterior/extract/progress | GET | 外镜提取进度轮询 |
+| /api/exterior/extract/retry | POST | 外镜提取重试（不重传文件） |
+| /api/exterior/save | POST | 外镜车型保存（原子写） |
+| /api/exterior/delete | POST | 外镜车型删除 |
 
 ---
 
@@ -143,7 +153,7 @@ mirro-fov/
 cd modules/smart/mirro-fov
 npm install
 pip install -r python/requirements.txt   # numpy 等 (STEP 提取必需)
-npm test             # 155 断言全绿
+npm test             # 166 断言全绿
 python python/test_step_extraction.py   # STEP 提取回归 (6 项)
 npm start            # → http://localhost:3000
 ```
