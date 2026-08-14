@@ -13,7 +13,7 @@
 | 1 | 镜面轮廓(width/height/corner) | `内后视镜镜座` 总成内平面面 | 命名总成+最大平面 | ✅ `内后视镜镜座`已命名 |
 | 2 | 球铰 pivot | `CARTESIAN_POINT` | 命名点 | ⏳ 需补 `球铰` |
 | 3 | 镜面零位中心 center_zero | `CARTESIAN_POINT` | 命名点 | ⏳ 需补 `镜心` |
-| 4 | yaw / pitch(安装角) | 镜面法向 + pivot/center_zero 几何 | 几何推导 | 🟡 需验证 |
+| 4 | yaw / pitch(安装角) | 镜面法向 + pivot/center_zero 几何 | 几何推导 | ✅ 已验证 |
 | 5 | 眼点 + IPD | `CARTESIAN_POINT` | 命名点 | ✅ `眼点左`/`眼点右`(modena `眼椭圆`/`左右眼椭圆中心点`已命名兼容) |
 | 6 | 地面(前后) | `CARTESIAN_POINT` | 命名点 | ⏳ 需补 `地面前`/`地面后`(`curb0 ground line`曲线已在,可兜底) |
 | 7 | 后挡风轮廓 + 透光区 | `ADVANCED_FACE` | 命名面 | ⏳ 需补 `后挡风`;`透光区` 暂不需要 |
@@ -100,7 +100,7 @@
 ## 六、开放项状态
 
 1. **命名点补充** — ✅ 命名规范由我方定义,供应商按规范提供(中文新名 `球铰`/`镜心`/`地面前`/`地面后`/`后挡风`/`透光区`/`镜片`)。旧名 `MIRROR_PIVOT` 等英文与 modena 中文名仍兼容,不强制重导;眼点沿用 modena 已有 `眼椭圆`/`左右眼椭圆中心点`。
-2. **yaw/pitch 推导** — 🟡 需对照 modena 验证:镜面法向 + pivot/center_zero → yaw/pitch 的推导规则;若不稳,改用显式命名方向。
+2. **yaw/pitch 推导** — ✅ 已验证 (stage 7):镜面法向 SVD 拟合 → yaw=atan2(ny,nx)=-23.5°、pitch=-asin(nz)=5.0°,与 modena 实测精确命中(误差 <0.001°)。
 3. **center_zero 近似** — 🟡 若镜片在 STEP 中处于零位,质心近似可行;否则必须用命名点。待验证镜片在 STEP 中的姿态。
 4. **后挡风透光区口径** — ⏳ 待确认:`REAR_WINDOW_TZ` 是透光区(可开启/可见区)还是 CAS 整框,与 modena transparent_zone 定义对齐。
 
