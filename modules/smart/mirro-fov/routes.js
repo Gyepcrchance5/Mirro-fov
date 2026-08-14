@@ -741,6 +741,7 @@ router.get('/api/exterior/config', (req, res) => {
       sr_fit: m.sr_fit, sr_nominal: m.sr_nominal, sr_tolerance: m.sr_tolerance, radius: m.radius,
       sphere_center: m.supplier_sphere_center, outline_n: m.outline_raw.length,
       turret_axis_p1: m.turret_axis_p1, rotation_axis_dir: m.rotation_axis_dir,
+      fold_axis_dir: m.fold_axis_dir || null,
     });
     res.json({
       ok: true, path: p, vehicle: raw.vehicle,

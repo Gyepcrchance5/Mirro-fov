@@ -23,7 +23,7 @@ function loadExteriorVehicle(p) {
 
 function scanExteriorVehicles() {
   if (!fs.existsSync(EXTERIOR_DIR)) return [];
-  const files = fs.readdirSync(EXTERIOR_DIR).filter(f => f.endsWith('.json'));
+  const files = fs.readdirSync(EXTERIOR_DIR).filter(f => f.endsWith('.json') && !f.endsWith('.example.json'));
   const out = [];
   for (const f of files) {
     try {

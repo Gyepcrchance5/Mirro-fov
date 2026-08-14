@@ -1793,6 +1793,15 @@
       $('ext-verdict-detail').textContent = '点击校核';
       $('ext-verdict-edges').innerHTML = ''; $('ext-verdict-fit').textContent = ''; $('ext-auto-status').textContent = '';
       $('ext-status').textContent = '';
+      // 缺左右调节轴 (fold_axis_dir) 时提示: θ 不生效
+      const hasFold = L.fold_axis_dir || R.fold_axis_dir;
+      if (!hasFold) {
+        $('ext-auto-status').textContent = '⚠️ 当前车型缺左右调节轴 (fold_axis_dir), θ 左右角度不生效。重新提取 STEP 或补录轴线可解决。';
+        $('ext-auto-status').style.color = '#ff9f0a';
+      } else {
+        $('ext-auto-status').textContent = '';
+        $('ext-auto-status').style.color = '';
+      }
     } catch (e) { $('ext-status').textContent = '加载失败: ' + e.message; }
   }
 
