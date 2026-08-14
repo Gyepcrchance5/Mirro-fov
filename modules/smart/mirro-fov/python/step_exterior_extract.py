@@ -258,6 +258,10 @@ def find_mirror_frames(entities, points, spheres=None):
     返回 {side: {turret_axis_p1[m], rotation_axis_dir, fold_axis_dir}}; 无有效坐标系时 {}。
     """
     sphere_centers = [np.array(s['center']) for s in spheres] if spheres else []
+    # 命名优先: 供应商命名 旋转轴左/旋转轴右 (旧名 MIRROR_FRAME_LEFT/RIGHT) 直接定位,
+    # 跳过结构自检阈值 (命名是明确契约, 阈值仅用于未命名猜测)
+    FRAME_ALIAS = {'旋转轴左': 'left', '旋转轴右': 'right',
+                   'MIRROR_FRAME_LEFT': 'left', 'MIRROR_FRAME_RIGHT': 'right'}
     candidates = []  # (side, frame)
     for eid, (t, args) in entities.items():
         if t != "AXIS2_PLACEMENT_3D":
@@ -265,6 +269,9 @@ def find_mirror_frames(entities, points, spheres=None):
         toks = scs._split_top_level(args)
         if len(toks) < 4:
             continue
+        raw_name = toks[0].strip() if toks else ''
+        name = decode_step_name(raw_name[1:-1]).strip() if (len(raw_name) >= 2 and raw_name[0] == "'" and raw_name[-1] == "'") else ''
+        named_side = FRAME_ALIAS.get(name)
         loc_ref = _ref_of(toks[1])
         axis_ref = _ref_of(toks[2])
         ref_ref = _ref_of(toks[3])
@@ -290,11 +297,12 @@ def find_mirror_frames(entities, points, spheres=None):
         rest = {k: v for k, v in axes.items() if k != fold_key}
         tilt_key = max(rest, key=lambda k: abs(rest[k][1]))
         tilt = rest[tilt_key]
-        side = 'right' if loc[1] > 1.0 else ('left' if loc[1] < -1.0 else None)
-        if side is None:  # 放置点 Y≈0, 无法分左右
+        # 分左右: 命名优先, 否则按放置点 Y
+        side = named_side or ('right' if loc[1] > 1.0 else ('left' if loc[1] < -1.0 else None))
+        if side is None:  # 无命名且放置点 Y≈0, 无法分左右
             continue
-        # 自检: 折叠轴近竖直 + 旋转轴近水平
-        if abs(fold[2]) <= 0.999 or abs(tilt[2]) >= 0.05:
+        # 自检: 仅未命名时走结构阈值 (命名信任供应商, 不因 fold/tilt 朝向异常误拒)
+        if not named_side and (abs(fold[2]) <= 0.999 or abs(tilt[2]) >= 0.05):
             print(f"  ⚠️ 跳过坐标系 #{eid} ({side}): 朝向异常 "
                   f"(fold|z|={abs(fold[2]):.4f}, tilt|z|={abs(tilt[2]):.4f})", file=sys.stderr)
             continue
@@ -302,6 +310,7 @@ def find_mirror_frames(entities, points, spheres=None):
             'turret_axis_p1': [round(float(loc[0]) / 1000, 6), round(float(loc[1]) / 1000, 6), round(float(loc[2]) / 1000, 6)],
             'rotation_axis_dir': [round(float(tilt[0]), 6), round(float(tilt[1]), 6), round(float(tilt[2]), 6)],
             'fold_axis_dir': [round(float(fold[0]), 6), round(float(fold[1]), 6), round(float(fold[2]), 6)],
+            'named': bool(named_side),
         }
         candidates.append((side, frame))
 
@@ -311,7 +320,10 @@ def find_mirror_frames(entities, points, spheres=None):
         if not c:
             continue
         if len(c) > 1:
-            # 多候选: 选折叠轴最竖直、旋转轴最水平者 (score 越大越好)
+            named = [f for f in c if f.get('named')]
+            if named:  # 命名候选优先于结构猜测
+                c = named
+            # 仍多候选: 选折叠轴最竖直、旋转轴最水平者
             c.sort(key=lambda f: abs(f['fold_axis_dir'][2]) - abs(f['rotation_axis_dir'][2]), reverse=True)
             print(f"  ⚠️ {side} 侧 {len(c)} 个候选镜体坐标系, 取折叠轴最竖直者", file=sys.stderr)
         frames[side] = c[0]
