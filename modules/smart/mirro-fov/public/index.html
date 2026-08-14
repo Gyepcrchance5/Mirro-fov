@@ -6,7 +6,7 @@
   <title>GB 15084 后视镜视野校核系统</title>
   <!-- Bootstrap 5 CDN (FLATLY 风格) -->
   <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.3/dist/flatly/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260812l">
+  <link rel="stylesheet" href="style.css?v=20260814b">
   <!-- Plotly.js CDN -->
   <script src="https://cdn.plot.ly/plotly-3.0.0.min.js"></script>
 </head>
@@ -78,18 +78,9 @@
         </div>
       </div>
 
-      <!-- 坐标提示条 -->
-      <div class="coord-bar mb-2 small">
-        <span style="font-weight:bold">坐标系: </span>整车坐标系 &nbsp;
-        <span class="coord-axis">X+</span>=后方 &nbsp;
-        <span class="coord-axis">Y+</span>=乘客右 &nbsp;
-        <span class="coord-axis">Z+</span>=向上 &nbsp;
-        <span class="text-muted">| 单位: mm</span>
-      </div>
-
-      <!-- 判据面板 (含后挡风穿透 rw_pass; 状态条整合进面板内) -->
-      <div id="verdict" class="mb-2">
-        <div class="alert alert-light py-3 px-3 mb-0 verdict-panel">
+      <!-- 判据面板 + 镜面角度卡 (同行, 判据面板 flex-grow 占主体) -->
+      <div class="d-flex gap-2 mb-2 align-items-stretch">
+        <div id="verdict" class="alert alert-light py-3 px-3 mb-0 verdict-panel flex-grow-1">
           <div class="verdict-head">
             <span id="verdict-badge" class="verdict-badge">--</span>
             <div class="verdict-body">
@@ -99,6 +90,7 @@
                 <span id="rw-badge" class="rw-badge">后挡风 --</span>
                 <span class="rw-note">参考·非硬判据</span>
                 <span class="verdict-spec">GB 15084 I类 · 后方 60m 处 ±10m (20m宽)</span>
+                <span class="text-muted small">· 整车坐标系 (X+后 Y+右 Z+上) · mm</span>
                 <span id="last-angles" class="verdict-status">已加载默认车型</span>
               </div>
               <div id="verdict-lines" class="verdict-lines"></div>
@@ -106,22 +98,16 @@
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- 参数卡 (7 卡) -->
-      <div class="row g-2 mb-2 param-row" id="param-row">
         <!-- 镜面角度 -->
-        <div class="col" style="min-width:130px;max-width:320px">
-          <div class="card shadow-sm h-100">
-            <div class="card-header py-1 px-2"><div class="card-title mb-0">镜面角度</div><small class="text-muted">yaw=绕Z偏航 pitch=绕Y俯仰</small></div>
-            <div class="card-body py-2 px-2">
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">偏航 yaw </label><small class="unit">°</small><input id="yaw" type="number" step="any" class="form-control form-control-sm" title="绕Z轴, 正→法线偏向乘客右 (+Y)"></div>
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">俯仰 pitch </label><small class="unit">°</small><input id="pitch" type="number" step="any" class="form-control form-control-sm" title="绕旋转后Y轴, 正→上仰"></div>
-              <div class="text-muted mt-2 pt-1 border-top" style="font-size:11px;white-space:nowrap;text-align:center">可用自动搜角</div>
-              <button id="verify-btn" class="btn btn-solid btn-sm mt-2 w-100" style="font-size:13px">校核</button>
-              <button id="auto-btn" class="btn btn-outline-accent btn-sm mt-1 w-100" style="font-size:13px">自动搜角</button>
-              <div id="auto-status" class="text-muted mt-1" style="font-size:11px"></div>
-            </div>
+        <div class="card shadow-sm" style="width:300px;flex:none">
+          <div class="card-header py-1 px-2"><div class="card-title mb-0">镜面角度</div><small class="text-muted">yaw=绕Z偏航 pitch=绕Y俯仰</small></div>
+          <div class="card-body py-2 px-2">
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">偏航 yaw </label><small class="unit">°</small><input id="yaw" type="number" step="any" class="form-control form-control-sm" title="绕Z轴, 正→法线偏向乘客右 (+Y)"></div>
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">俯仰 pitch </label><small class="unit">°</small><input id="pitch" type="number" step="any" class="form-control form-control-sm" title="绕旋转后Y轴, 正→上仰"></div>
+            <div class="text-muted mt-2 pt-1 border-top" style="font-size:11px;white-space:nowrap;text-align:center">可用自动搜角</div>
+            <button id="verify-btn" class="btn btn-solid btn-sm mt-2 w-100" style="font-size:13px">校核</button>
+            <button id="auto-btn" class="btn btn-outline-accent btn-sm mt-1 w-100" style="font-size:13px">自动搜角</button>
+            <div id="auto-status" class="text-muted mt-1" style="font-size:11px"></div>
           </div>
         </div>
       </div>
@@ -496,50 +482,36 @@
         </div>
       </div>
 
-      <!-- 坐标提示条 -->
-      <div class="coord-bar mb-2 small">
-        <span style="font-weight:bold">坐标系: </span>整车坐标系 &nbsp;
-        <span class="coord-axis">X+</span>=后方 &nbsp;
-        <span class="coord-axis">Y+</span>=乘客右 &nbsp;
-        <span class="coord-axis">Z+</span>=向上 &nbsp;
-        <span class="text-muted">| 单位: m | 双眼交集 · 精确球面反射</span>
-      </div>
-
-      <!-- 判据面板 (左+右 双徽章) -->
-      <div id="ext-verdict" class="mb-2">
-        <div class="alert alert-light py-3 px-3 mb-0 verdict-panel">
-          <div class="verdict-head">
-            <div class="d-flex flex-column gap-1">
-              <span id="ext-badge-left" class="verdict-badge">左 --</span>
-              <span id="ext-badge-right" class="verdict-badge">右 --</span>
-            </div>
-            <div class="verdict-body">
-              <div class="verdict-title">
-                <span class="verdict-rule">III 类视野</span>
-                <span class="verdict-spec">近1m@眼后4m / 远4m@眼后20m · 双眼交集</span>
-                <span id="ext-verdict-detail" class="verdict-status">点击校核</span>
+      <!-- 判据面板 + 调节角度卡 (同行, 判据面板 flex-grow 占主体) -->
+      <div class="d-flex gap-2 mb-2 align-items-stretch">
+        <div id="ext-verdict" class="alert alert-light py-3 px-3 mb-0 verdict-panel flex-grow-1">
+            <div class="verdict-head">
+              <div class="d-flex flex-column gap-1">
+                <span id="ext-badge-left" class="verdict-badge">左 --</span>
+                <span id="ext-badge-right" class="verdict-badge">右 --</span>
               </div>
-              <div id="ext-verdict-edges" class="verdict-lines"></div>
-              <div id="ext-verdict-fit" class="mt-1"></div>
+              <div class="verdict-body">
+                <div class="verdict-title">
+                  <span class="verdict-rule">III 类视野</span>
+                  <span class="verdict-spec">近1m@眼后4m / 远4m@眼后20m · 双眼交集</span>
+                  <span class="text-muted small">· 整车坐标系 (X+后 Y+右 Z+上) · m</span>
+                  <span id="ext-verdict-detail" class="verdict-status">点击校核</span>
+                </div>
+                <div id="ext-verdict-edges" class="verdict-lines"></div>
+                <div id="ext-verdict-fit" class="mt-1"></div>
+              </div>
             </div>
-          </div>
         </div>
-      </div>
-
-      <!-- 参数卡 (L|R 拆分, 等高) -->
-      <div class="row g-2 mb-2 param-row" id="ext-param-row">
         <!-- 调节角度 + 校核 + 自动搜角 (绕转向器轴线) -->
-        <div class="col" style="min-width:130px;max-width:320px">
-          <div class="card shadow-sm h-100">
-            <div class="card-header py-1 px-2"><div class="card-title mb-0">调节角度</div><small class="text-muted">上下 + 左右调节 · ±3°</small></div>
-            <div class="card-body py-2 px-2">
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">ψ 上下 </label><small class="unit">°</small><input id="ext-psi" type="number" step="0.5" min="-3" max="3" value="0" class="form-control form-control-sm" title="绕上下调节轴旋转角, ±3° 调节"></div>
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">θ 左右 </label><small class="unit">°</small><input id="ext-theta" type="number" step="0.5" min="-3" max="3" value="0" class="form-control form-control-sm" title="绕左右调节轴旋转角, ±3° 调节"></div>
-              <div class="text-muted mt-2 pt-1 border-top" style="font-size:11px;text-align:center">可用自动搜角</div>
-              <button id="ext-verify-btn" class="btn btn-solid btn-sm mt-2 w-100" style="font-size:13px">校核</button>
-              <button id="ext-auto-btn" class="btn btn-outline-accent btn-sm mt-1 w-100" style="font-size:13px">自动搜角</button>
-              <div id="ext-auto-status" class="text-muted mt-1" style="font-size:11px"></div>
-            </div>
+        <div class="card shadow-sm" style="width:300px;flex:none">
+          <div class="card-header py-1 px-2"><div class="card-title mb-0">调节角度</div><small class="text-muted">上下 + 左右调节 · ±3°</small></div>
+          <div class="card-body py-2 px-2">
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">ψ 上下 </label><small class="unit">°</small><input id="ext-psi" type="number" step="0.5" min="-3" max="3" value="0" class="form-control form-control-sm" title="绕上下调节轴旋转角, ±3° 调节"></div>
+            <div class="mb-2"><label class="mb-0" style="font-size:13px">θ 左右 </label><small class="unit">°</small><input id="ext-theta" type="number" step="0.5" min="-3" max="3" value="0" class="form-control form-control-sm" title="绕左右调节轴旋转角, ±3° 调节"></div>
+            <div class="text-muted mt-2 pt-1 border-top" style="font-size:11px;text-align:center">可用自动搜角</div>
+            <button id="ext-verify-btn" class="btn btn-solid btn-sm mt-2 w-100" style="font-size:13px">校核</button>
+            <button id="ext-auto-btn" class="btn btn-outline-accent btn-sm mt-1 w-100" style="font-size:13px">自动搜角</button>
+            <div id="ext-auto-status" class="text-muted mt-1" style="font-size:11px"></div>
           </div>
         </div>
       </div>
@@ -703,7 +675,7 @@
 
   </div>
 
-  <script src="app.js?v=20260813h"></script>
+  <script src="app.js?v=20260813m"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>
