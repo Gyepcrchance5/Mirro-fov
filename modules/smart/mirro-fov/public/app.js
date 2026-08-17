@@ -187,7 +187,6 @@
     'mirror-type': $('mirror-type-page'),
     inner: $('inner-page'),
     exterior: $('exterior-page'),
-    'wizard-inner': $('wizard-inner-page'),
     'wizard-exterior': $('wizard-exterior-page'),
     'wizard-interior': $('wizard-interior-page'),
   };
@@ -202,10 +201,6 @@
     if (name === 'exterior' && !pages.exterior.__inited) {
       pages.exterior.__inited = true;
       initExterior();
-    }
-    if (name === 'wizard-inner' && !$('wizard-inner-page').__inited) {
-      $('wizard-inner-page').__inited = true;
-      initWizardInner();
     }
     if (name === 'wizard-exterior' && !$('wizard-exterior-page').__inited) {
       $('wizard-exterior-page').__inited = true;
@@ -541,15 +536,15 @@
   // ====== 判据面板 (含 rw_pass) ======
   function renderVerdict(data) {
     const pass = data.mirrorPass;
-    elVerdictDiv.className = 'alert alert-light verdict-panel py-3 px-3 mb-0 flex-grow-1 verdict-head-wrap ' + (pass ? 'verdict-pass' : 'verdict-fail');
+    elVerdictDiv.className = 'alert alert-light verdict-panel verdict-two-col py-3 px-3 mb-0 flex-grow-1 verdict-head-wrap ' + (pass ? 'verdict-pass' : 'verdict-fail');
     elVerdictCount.textContent = data.nHit + '/' + data.nTot;
     elVerdictBadge.textContent = pass ? 'PASS' : 'FAIL';
     elVerdictBadge.className = 'verdict-badge-md ' + (pass ? 'badge-pass' : 'badge-fail');
     // rw_pass (后挡风穿透, 仅报告)
     if (data.rearWindowPass != null) {
       const rp = data.rearWindowPass;
-      elRwBadge.textContent = `后挡风 ${rp ? 'PASS' : 'FAIL'}`;
-      elRwBadge.className = 'rw-badge ' + (rp ? 'rw-pass' : 'rw-fail');
+      elRwBadge.textContent = rp ? 'PASS' : 'FAIL';
+      elRwBadge.className = 'verdict-badge-md ' + (rp ? 'badge-pass' : 'badge-fail');
     }
 
     // 镜片判定: 命中点显示镜面局部坐标 (lx, ly mm) — 直观反映交点在镜面哪个位置 (驾驶员判断余量)
@@ -581,13 +576,18 @@
         const through = cl.through === true;
         const hit = !!cl.hit2D;
         const cls = !hit ? 'no' : (through ? 'ok' : 'warn');
-        const status = !hit ? '✗ 未穿透' : (through ? `✓ 穿透 (距边 ${cl.dist != null ? cl.dist.toFixed(1) : '-'}mm)` : '✗ 未在透光区');
-        rwLines += `<span class="verdict-line ${cls}"><i class="dot"></i>` +
-                   `<b>${ld.eyeLabel}→${ld.endpointLabel}</b><s>${status}</s></span>`;
+        const status = !hit ? '✗ 未穿透' : (through ? '✓ 穿透' : '✗ 未在透光区');
+        const color = !hit ? 'var(--fail)' : (through ? 'var(--pass)' : '#ff9f0a');
+        const dist = (hit && cl.dist != null) ? `${cl.dist.toFixed(1)} mm` : '—';
+        rwLines += `<div class="verdict-line-row ${cls}">` +
+                   `<span class="verdict-line-name">${ld.eyeLabel}→${ld.endpointLabel}</span>` +
+                   `<span class="verdict-line-info" style="color:${color}">${status}</span>` +
+                   `<span class="verdict-line-dist">${dist}</span>` +
+                   `</div>`;
       }
     } else if (data.lineDetails) {
       // 后挡风未提取/未配置 — 给出提示
-      rwLines = `<span class="verdict-line muted"><i class="dot"></i><b>后挡风轮廓未提取</b><s>参考判据不可用</s></span>`;
+      rwLines = `<div class="verdict-line-row muted"><span class="verdict-line-name">后挡风</span><span class="verdict-line-info">轮廓未提取</span><span class="verdict-line-dist">—</span></div>`;
     }
     elVerdictRwLines.innerHTML = rwLines;
     let fail = '';
@@ -629,7 +629,7 @@
     } catch (e) {
       console.error('[verify]', e);
       elLastAngles.textContent = `错误: ${e.message}`;
-      elVerdictDiv.className = 'alert alert-light verdict-panel verdict-fail py-3 px-3 mb-0 flex-grow-1';
+      elVerdictDiv.className = 'alert alert-light verdict-panel verdict-two-col verdict-fail py-3 px-3 mb-0 flex-grow-1';
       elVerdictCount.textContent = '-/-';
       elVerdictBadge.textContent = 'ERROR';
       elVerdictBadge.className = 'verdict-badge-md badge-fail';
@@ -643,7 +643,7 @@
       }
       const pc = $('panel-count'); if (pc) pc.textContent = '';
       const rc = $('rw-count'); if (rc) rc.textContent = '';
-      const rb = $('rw-badge'); if (rb) { rb.textContent = '后挡风 --'; rb.className = 'rw-badge'; }
+      const rb = $('rw-badge'); if (rb) { rb.textContent = '--'; rb.className = 'verdict-badge-md'; }
     } finally {
       verifyBusy = false;
       elVerifyBtn.disabled = false;
@@ -964,7 +964,7 @@
   }
 
   // ====== 共享 DOM 初始化 (内镜页: 后挡风卡行 + 按钮事件绑定) ======
-  // 提取为共享函数, initInner 和 saveNewVehicle 两处调用 (消除 30 行复制)
+  // 提取为共享函数, initInner 和内镜保存后跳转两处调用 (消除 30 行复制)
   function initInnerDOM() {
     buildRWCard('rw-row', 'rw-c', '后挡风 CAS 角', 7, RW_LABELS);
     buildRWCard('tz-row', 'rw-t', '后挡风 透光角', 4, ['透光角1', '透光角2', '透光角3', '透光角4']);
@@ -1041,270 +1041,6 @@
   function initExterior() {
     initExteriorDOM();
     loadExtVehicles().then(() => loadExtConfig($('ext-vehicle-select').value).then(() => doExtVerify()));
-  }
-
-  // ====== 内后视镜新建向导 ======
-  const wizardData = { name: '', mirrorOutline: null, rwOutline: null };
-
-  function wizardNext(current) {
-    document.querySelector('.wizard-step[data-step="' + current + '"]').style.display = 'none';
-    document.querySelector('.wizard-step[data-step="' + (current + 1) + '"]').style.display = '';
-  }
-  function wizardPrev(current) {
-    document.querySelector('.wizard-step[data-step="' + current + '"]').style.display = 'none';
-    document.querySelector('.wizard-step[data-step="' + (current - 1) + '"]').style.display = '';
-  }
-
-  // 动态生成 Step 2 点坐标输入卡 (5 个点, 结构同校核页参数卡)
-  const WIZ_POINTS = [
-    { id: 'pvt', label: '球铰 pivot', default: [2883.07, 0, 1441.017] },
-    { id: 'cz', label: '镜面中心', default: [2909.215, 0.007, 1441.88] },
-    { id: 'eye', label: '眼点中心', default: [3243.09, -385, 1372] },
-    { id: 'gf', label: '地面前端', default: [500, 0, 193.209] },
-    { id: 'gr', label: '地面后端', default: [5900, 0, 193.209] },
-  ];
-  function buildWizardPoints() {
-    const grid = $('wiz-points-grid');
-    grid.innerHTML = '';
-    for (const pt of WIZ_POINTS) {
-      const col = document.createElement('div');
-      col.className = 'col-6 col-md-6';
-      const axes = ['X', 'Y', 'Z'];
-      col.innerHTML = `
-        <div class="card shadow-sm h-100">
-          <div class="card-header py-1 px-2"><div class="card-title mb-0">${pt.label}</div></div>
-          <div class="card-body py-2 px-2">
-            ${axes.map((ax, i) => `<div class="mb-2"><label class="mb-0" style="font-size:13px">${ax} </label><small class="unit">mm</small><input id="wiz-${pt.id}-${ax.toLowerCase()}" type="number" step="any" class="form-control form-control-sm" value="${pt.default[i]}"></div>`).join('')}
-          </div>
-        </div>`;
-      grid.appendChild(col);
-    }
-  }
-
-  // STEP 上传 + 解析 + 预览
-  // 直接以原始二进制上传 (非 base64 JSON): 无编码开销/不冻结主线程, 体积少 33%, 本地秒传
-  async function parseStepFile(fileInput, resultDiv, type) {
-    const file = fileInput.files[0];
-    if (!file) { resultDiv.className = 'wizard-result'; resultDiv.textContent = '请先选择文件'; return; }
-    // 预检: 超过 500MB 前端直接拦截
-    if (file.size > 500 * 1024 * 1024) {
-      alert('文件 ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制, 请确认 STEP 文件');
-      return;
-    }
-    const parseBtn = $('wiz-parse-' + (type === 'mirror' ? 'mirror' : 'rw'));
-    if (parseBtn) parseBtn.disabled = true;
-    resultDiv.className = 'wizard-result';
-    try {
-      resultDiv.textContent = `上传 0%, 解析轮廓中...`;
-      // 轮询提取进度 (文件名键与服务端 sanitize 一致)
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const poll = setInterval(async () => {
-        try {
-          const r = await fetch(API_BASE + '/step/progress?name=' + encodeURIComponent(safeName));
-          const d = await r.json();
-          if (d.progress) resultDiv.textContent = d.progress;
-        } catch (e) { /* 轮询失败忽略, 主请求结果为准 */ }
-      }, 500);
-      let data;
-      try {
-        data = await uploadStep(API_BASE + '/step/upload', file, {
-          onProgress: (loaded, total) => {
-            if (total > 0) resultDiv.textContent = `上传 ${(loaded / total * 100).toFixed(0)}%, 解析轮廓中...`;
-          },
-          headers: { 'X-Type': type },
-        });
-      } finally { clearInterval(poll); }
-      if (data.ok) {
-        resultDiv.className = 'wizard-result ok';
-        resultDiv.textContent = `提取 ${data.outline_count} 点轮廓`;
-        if (type === 'mirror') {
-          wizardData.mirrorOutline = data.outline;
-          renderWizardPreview('wiz-mirror-plot', 'wiz-mirror-preview', data.outline, '镜面轮廓');
-        } else {
-          wizardData.rwOutline = data.outline;
-          renderWizardPreview('wiz-rw-plot', 'wiz-rw-preview', data.outline, '后挡风轮廓');
-        }
-      } else {
-        resultDiv.className = 'wizard-result err';
-        resultDiv.textContent = `失败: ${data.error}`;
-      }
-    } catch (err) {
-      resultDiv.className = 'wizard-result err';
-      resultDiv.textContent = `失败: ${err.message}`;
-    } finally {
-      if (parseBtn) parseBtn.disabled = false;
-    }
-  }
-
-  // 轮廓预览 (Plotly 2D, 后挡风用 Y-Z, 镜面用 u-v)
-  function renderWizardPreview(plotDiv, previewDiv, outline, title) {
-    if (typeof Plotly === 'undefined' || !outline || outline.length < 3) return;
-    const is2D = outline[0].length === 2;
-    const xs = outline.map(p => is2D ? p[0] : p[1]);
-    const ys = outline.map(p => is2D ? p[1] : p[2]);
-    xs.push(xs[0]); ys.push(ys[0]);
-    $(previewDiv).style.display = '';
-    Plotly.react(plotDiv, [{
-      x: xs, y: ys, mode: 'lines+markers',
-      line: { color: '#0071e3', width: 2 },
-      marker: { size: 3, color: '#0071e3' },
-      fill: 'toself', fillcolor: 'rgba(0,113,227,0.08)',
-    }], {
-      xaxis: { title: 'u (mm)', gridcolor: '#f0f0f2' },
-      yaxis: { title: 'v (mm)', gridcolor: '#f0f0f2' },
-      margin: { l: 50, r: 10, t: 24, b: 40 },
-      paper_bgcolor: '#fff', plot_bgcolor: '#fff',
-      font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
-      title: { text: title + ' · ' + outline.length + ' 点', font: { size: 12, color: '#6e6e73' } },
-    }, { responsive: true });
-  }
-
-  // 3DE 读取点坐标 (复用 doCatia 流程)
-  async function doWizCatia() {
-    const btn = $('wiz-catia-btn');
-    if (!confirm('将从 3DE 读取点坐标。\n\n请在运行本服务的终端窗口中完成选点。\n\n确定开始？')) return;
-    btn.disabled = true; btn.textContent = '读取中…';
-    try {
-      const r = await fetch(API_BASE + '/catia', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const d = await r.json();
-      if (!d.ok) throw new Error(d.error);
-      // 读到的车型配置, 填充向导点坐标 (从 JSON 文件读)
-      const cfg = await (await fetch(API_BASE + '/config?path=' + encodeURIComponent(d.output))).json();
-      fillWizardPointsFromConfig(cfg);
-      alert('已从 3DE 读取并填充点坐标。请确认后继续。');
-    } catch (e) {
-      alert('3DE 读取失败: ' + e.message + '\n\n请确认 3DE 已启动、Python/pywin32 已装、并在服务终端完成操作。');
-    } finally { btn.disabled = false; btn.textContent = '从 3DE 读取'; }
-  }
-
-  function fillWizardPointsFromConfig(cfg) {
-    const map = { 'pvt-x': 'pvMM', 'pvt-y': 'pvMM', 'pvt-z': 'pvMM',
-                  'cz-x': 'czMM', 'cz-y': 'czMM', 'cz-z': 'czMM',
-                  'eye-x': 'eyeMM', 'eye-y': 'eyeMM', 'eye-z': 'eyeMM',
-                  'gf-x': 'gfMM', 'gf-y': 'gfMM', 'gf-z': 'gfMM',
-                  'gr-x': 'grMM', 'gr-y': 'grMM', 'gr-z': 'grMM' };
-    for (const [wizId, cfgField] of Object.entries(map)) {
-      const el = $('wiz-' + wizId);
-      if (el && cfg[cfgField]) {
-        const idx = { x: 0, y: 1, z: 2 }[wizId.slice(-1)];
-        el.value = cfg[cfgField][idx];
-      }
-    }
-    if (cfg.yawDeg != null) $('wiz-yaw').value = cfg.yawDeg;
-    if (cfg.pitchDeg != null) $('wiz-pitch').value = cfg.pitchDeg;
-    if (cfg.cornerRadiusMM != null) $('wiz-corner').value = cfg.cornerRadiusMM;
-    if (cfg.ipdMM != null) $('wiz-ipd').value = cfg.ipdMM;
-  }
-
-  // 保存新车型 → 切校核页
-  async function saveNewVehicle() {
-    const name = ($('wiz-name').value || '新车型').trim();
-    // parseFloat 空值兜底: 空串/NaN→0, 避免 JSON.stringify 转 null 污染数据 (P0)
-    const pf = (id, def) => { const v = parseFloat($('wiz-' + id).value); return isNaN(v) ? def : v; };
-    const pf3 = (id, def) => [$('wiz-' + id + '-x'), $('wiz-' + id + '-y'), $('wiz-' + id + '-z')].map(el => { const v = parseFloat(el.value); return isNaN(v) ? 0 : v; });
-    const gfZ = pf('gf-z', 0);
-    // 镜面尺寸: 有 STEP 轮廓时读取真实跨度的 floor 值, 否则默认
-    const w = wizardData.mirrorOutline && wizardData.mirrorOutline.length >= 3
-      ? Math.floor(Math.max(...wizardData.mirrorOutline.map(p => p[0])) - Math.min(...wizardData.mirrorOutline.map(p => p[0]))) || 224.796 : 224.796;
-    const h = wizardData.mirrorOutline && wizardData.mirrorOutline.length >= 3
-      ? Math.floor(Math.max(...wizardData.mirrorOutline.map(p => p[1])) - Math.min(...wizardData.mirrorOutline.map(p => p[1]))) || 50.794 : 50.794;
-    // 后挡风: 无 STEP 时用 7 点占位 (与系统预期 7 行对齐, 不 pad 重复点)
-    const defaultRw = wizardData.rwOutline && wizardData.rwOutline.length >= 3 ? [[...wizardData.rwOutline[0]]] : [
-      [4.54, -0.57, 1.49], [4.71, -0.51, 1.45], [4.71, 0.51, 1.45], [4.54, 0.57, 1.49],
-      [4.54, 0.57, 1.49], [4.54, -0.57, 1.49], [4.54, -0.57, 1.49]];
-    const payload = {
-      name,
-      widthMM: w, heightMM: h,
-      cornerRadiusMM: pf('corner', 10),
-      yawDeg: pf('yaw', -23.5),
-      pitchDeg: pf('pitch', 5.0),
-      pvMM: pf3('pvt'),
-      czMM: pf3('cz'),
-      eyeMM: pf3('eye'),
-      ipdMM: pf('ipd', 65),
-      gfMM: [pf('gf-x', 0), pf('gf-y', 0), gfZ],
-      grMM: [pf('gr-x', 0), pf('gr-y', 0), pf('gr-z', 0)],
-      groundZ: gfZ / 1000,
-      rwMM: defaultRw,
-      rwTMM: [],
-    };
-
-    try {
-      // 1. 保存车型 JSON (复用现有 save 接口)
-      const resp = await fetch(API_BASE + '/vehicles/save', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const d = await resp.json();
-      if (!d.ok) throw new Error(d.error);
-
-      // 2. 如有 STEP 轮廓, 保存 outline 文件并设 outline_path
-      if (wizardData.mirrorOutline || wizardData.rwOutline) {
-        await saveWizardOutlines(name, d.path);
-      }
-
-      // 3. 切校核页: 需确保内镜页 DOM 就绪 (后挡风 7 点行等), 但不触发 auto-load;
-      //    initInner 内部的 loadVehicleConfig+doVerify 会与下面的加载产生异步竞态
-      //    (initInner 的 doVerify 晚到达 → 覆盖新车型渲染)
-      if (!pages.inner.__inited) {
-        pages.inner.__inited = true;
-        initInnerDOM();
-      }
-      // 始终刷新下拉并选中新车型 (此前已 inited 时下拉是旧列表, 新车型不在其中)
-      await loadVehicles();
-      $('vehicle-select').value = d.path;
-      showPage('inner');
-      await loadVehicleConfig(d.path);
-      await doVerify();
-    } catch (e) {
-      alert('保存失败: ' + e.message);
-    }
-  }
-
-  // 保存向导提取的轮廓到 data/vehicles/<name>.*.json 并更新车型 outline_path
-  async function saveWizardOutlines(name, vehiclePath) {
-    const safe = name.replace(/[\\/:*?"<>|]/g, '_');
-    // 镜面轮廓 (outline_local_mm, 供 isOnReflectiveSurface)
-    if (wizardData.mirrorOutline) {
-      const local = wizardData.mirrorOutline; // [u,v] mm 已由后端转换
-      const outlineFile = { source: 'wizard_step', outline_local_mm: local, outline_count: local.length, unit: 'mm' };
-      const saveResp = await fetch(API_BASE + '/vehicles/save-outline', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vehiclePath, kind: 'mirror', outlineFile }),
-      });
-      const sd = await saveResp.json();
-      if (!sd.ok) throw new Error(sd.error);
-    }
-    // 后挡风轮廓 (outline_mm, 3D)
-    if (wizardData.rwOutline) {
-      const saveResp = await fetch(API_BASE + '/vehicles/save-outline', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vehiclePath, kind: 'rear-window', outlineFile: { source: 'wizard_step', outline_mm: wizardData.rwOutline, outline_count: wizardData.rwOutline.length, unit: 'mm' } }),
-      });
-      const sd = await saveResp.json();
-      if (!sd.ok) throw new Error(sd.error);
-    }
-  }
-
-  function initWizardInner() {
-    buildWizardPoints();
-    $('wiz-inner-back').addEventListener('click', () => showPage('mirror-type'));
-    $('wiz-step0-next').addEventListener('click', () => { wizardData.name = $('wiz-name').value || '新车型'; wizardNext(0); });
-    $('wiz-step1-prev').addEventListener('click', () => wizardPrev(1));
-    $('wiz-step1-next').addEventListener('click', () => wizardNext(1));
-    $('wiz-step2-prev').addEventListener('click', () => wizardPrev(2));
-    $('wiz-step2-next').addEventListener('click', () => wizardNext(2));
-    $('wiz-step3-prev').addEventListener('click', () => wizardPrev(3));
-    $('wiz-parse-mirror').addEventListener('click', () => parseStepFile($('wiz-mirror-step'), $('wiz-mirror-result'), 'mirror'));
-    $('wiz-parse-rw').addEventListener('click', () => parseStepFile($('wiz-rw-step'), $('wiz-rw-result'), 'rear-window'));
-    // 选完文件立即自动解析 (无需再点按钮); 按钮保留作"重新解析"
-    $('wiz-mirror-step').addEventListener('change', () => parseStepFile($('wiz-mirror-step'), $('wiz-mirror-result'), 'mirror'));
-    $('wiz-rw-step').addEventListener('change', () => parseStepFile($('wiz-rw-step'), $('wiz-rw-result'), 'rear-window'));
-    $('wiz-catia-btn').addEventListener('click', doWizCatia);
-    $('wiz-save-btn').addEventListener('click', saveNewVehicle);
   }
 
   // ====== 外后视镜新建向导 (阶段 5) ======
@@ -1452,11 +1188,11 @@
         margin: { l: 50, r: 10, t: 24, b: 40 },
         paper_bgcolor: '#fff', plot_bgcolor: '#fff',
         font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
-        title: { text: label + ' · ' + ol.length + ' 点', font: { size: 12, color: '#6e6e73' } },
+        title: { text: ol.length + ' 点', font: { size: 12, color: '#6e6e73' } },
       }, { responsive: true });
       const dev = fit && fit.gate && Number.isFinite(fit.gate.maxDevMm) ? fit.gate.maxDevMm.toFixed(3) : '-';
       const c = fit && Array.isArray(fit.center) ? fit.center.map(x => Number.isFinite(x) ? x.toFixed(2) : '-').join(', ') : '-';
-      $(fitDiv).textContent = label + ' · 球面偏差 ' + dev + 'mm · 球心[' + c + ']';
+      $(fitDiv).textContent = '球面偏差 ' + dev + 'mm · 球心[' + c + ']';
     };
     draw('wiz-ext-plot-left', 'wiz-ext-fit-left', leftMir, v.left && v.left.fit, '左镜轮廓');
     draw('wiz-ext-plot-right', 'wiz-ext-fit-right', rightMir, v.right && v.right.fit, '右镜轮廓');
@@ -1705,7 +1441,7 @@
       margin: { l: 50, r: 10, t: 24, b: 40 },
       paper_bgcolor: '#fff', plot_bgcolor: '#fff',
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
-      title: { text: '内镜轮廓 · ' + ol.length + ' 点', font: { size: 12, color: '#6e6e73' } },
+      title: { text: ol.length + ' 点', font: { size: 12, color: '#6e6e73' } },
     }, { responsive: true });
     $('wiz-int-summary').innerHTML = wizIntSummaryHtml(r);
   }
@@ -1741,7 +1477,7 @@
       margin: { l: 50, r: 10, t: 24, b: 40 },
       paper_bgcolor: '#fff', plot_bgcolor: '#fff',
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
-      title: { text: '后挡风轮廓 · ' + ol.length + ' 点', font: { size: 12, color: '#6e6e73' } },
+      title: { text: ol.length + ' 点', font: { size: 12, color: '#6e6e73' } },
     }, { responsive: true });
   }
 
@@ -1782,7 +1518,7 @@
       const d = await resp.json();
       if (!d.ok) throw new Error(d.error);
 
-      // 跳校核页 (复用 saveNewVehicle 的 DOM 就绪 + 加载逻辑, 避免 initInner 竞态)
+      // 跳校核页 (DOM 就绪 + 加载, 避免 initInner 竞态)
       if (!pages.inner.__inited) {
         pages.inner.__inited = true;
         initInnerDOM();
@@ -1848,7 +1584,7 @@
       $('ext-badge-right').textContent = '右 --'; $('ext-badge-right').className = 'verdict-badge-md';
       $('ext-verdict-detail').textContent = '点击校核';
       $('ext-verdict-edges-left').innerHTML = ''; $('ext-verdict-edges-right').innerHTML = '';
-      $('ext-verdict-fit').textContent = ''; $('ext-auto-status').textContent = '';
+      $('ext-verdict-fit').textContent = ''; $('ext-verdict-fit').style.display = 'none'; $('ext-auto-status').textContent = '';
       $('ext-status').textContent = '';
       // 折叠头摘要 (SR / 球心 / 眼距)
       const esum = $('ext-params-summary');
@@ -2029,7 +1765,7 @@
     const hasSearch = (s) => s.search && s.search.found;
     $('ext-verdict-detail').textContent = `ψ=${d.psi != null ? d.psi : 0}° θ=${d.theta != null ? d.theta : 0}° · ${d.left.mirrorPass && d.right.mirrorPass ? '两镜均通过' : (hasSearch(d.left) || hasSearch(d.right) ? '±3° 内有解' : (d.left.search == null ? '自动搜角可查' : '±3° 内无解'))}`;
 
-    // 行式判定: 每镜两行 (近场/远场)
+    // 行式判定: 每镜近/远场主行 + 三边 AB/BT/TA 采样子行 (证据链, 对齐内镜五线法)
     const zoneRow = (label, pass, marginMm) => {
       const cls = pass ? 'ok' : 'no';
       const sign = pass ? '✓' : '✗';
@@ -2041,18 +1777,39 @@
              `<span class="verdict-line-dist">${margin}</span>` +
              `</div>`;
     };
-    $('ext-verdict-edges-left').innerHTML =
-      zoneRow('近场 1m', d.left.nearPass, d.left.nearMinMargin) +
-      zoneRow('远场 4m', d.left.farPass, d.left.farMinMargin);
-    $('ext-verdict-edges-right').innerHTML =
-      zoneRow('近场 1m', d.right.nearPass, d.right.nearMinMargin) +
-      zoneRow('远场 4m', d.right.farPass, d.right.farMinMargin);
-    // 数据质量: 拟合球心 vs 供应商 (各字段可能为 null, 防御 toFixed/toExponential 崩溃)
-    const fmtC = (v) => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? x.toFixed(3) : '-').join(',') : '-';
-    const fmtE = (v) => Number.isFinite(v) ? v.toExponential(0) : '-';
-    const fmtD = (cc) => (cc && Number.isFinite(cc.devMm)) ? cc.devMm.toFixed(1) : '-';
-    const fitLine = (label, r) => `<span class="mono" style="font-size:11px;color:#9a9aa0;line-height:1.6"><b>${label}</b> 球心[${fmtC(r.fit && r.fit.center)}] 残差${fmtE(r.fit && r.fit.residualMm)}mm 交叉✓(${fmtD(r.fit && r.fit.crossCheck)}mm)</span>`;
-    $('ext-verdict-fit').innerHTML = fitLine('左', d.left) + ' &nbsp; ' + fitLine('右', d.right);
+    // 三边采样子行: 每条边可见采样数 (x/y), 揭示"双眼反射点都落在镜面内"的证据
+    const edgeRow = (edges) => {
+      if (!edges || !edges.length) return '';
+      const items = edges.map(e =>
+        `<span class="edge-item${e.pass ? '' : ' edge-fail'}">${e.name} ${e.visible}</span>`).join('');
+      return `<div class="verdict-edge-detail">${items}</div>`;
+    };
+    // 球面拟合 (栏内底部): SR/残差/交叉校核 — 并入各栏, 竖虚线从上到下贯通
+    const fitItem = (r) => {
+      const f = r.fit || {}, cc = f.crossCheck || {};
+      const sr = Number.isFinite(f.radius) ? f.radius.toFixed(3) : '-';
+      const res = Number.isFinite(f.residualMm)
+        ? (Math.abs(f.residualMm) >= 0.01 ? f.residualMm.toFixed(2)
+           : Math.abs(f.residualMm) >= 0.001 ? f.residualMm.toFixed(3)
+           : f.residualMm.toExponential(0))
+        : '-';
+      const crossOk = cc.ok === true ? '✓' : (cc.ok === false ? '✗' : '-');
+      const dev = Number.isFinite(cc.devMm) ? `${cc.devMm.toFixed(1)}mm` : '-';
+      return `<div class="verdict-fit-item">` +
+             `<span class="verdict-fit-label">球面拟合</span>` +
+             `<span class="verdict-fit-kv">SR <b>${sr}</b></span>` +
+             `<span class="verdict-fit-kv">残差 <b>${res}mm</b></span>` +
+             `<span class="verdict-fit-kv">交叉${crossOk} <b>${dev}</b></span>` +
+             `</div>`;
+    };
+    const sideBlock = (r) =>
+      zoneRow('近场 1m', r.nearPass, r.nearMinMargin) + edgeRow(r.nearEdges) +
+      zoneRow('远场 4m', r.farPass, r.farMinMargin) + edgeRow(r.farEdges) +
+      fitItem(r);
+    $('ext-verdict-edges-left').innerHTML = sideBlock(d.left);
+    $('ext-verdict-edges-right').innerHTML = sideBlock(d.right);
+    $('ext-verdict-fit').innerHTML = '';
+    $('ext-verdict-fit').style.display = 'none';
   }
 
   // 轮廓内偏移 3mm 安全线 (法规: 视野线到边缘安全距离 > 3mm)

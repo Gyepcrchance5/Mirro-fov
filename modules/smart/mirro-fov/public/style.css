@@ -165,7 +165,7 @@ h4, .h4 {
 /* 镜片判定: 每行一个 5 线分项 (名称 + 状态 + 距离) — 三列等宽对齐 */
 .verdict-line-row {
   display: grid;
-  grid-template-columns: 64px 1fr 72px;
+  grid-template-columns: max-content 1fr 104px;
   align-items: center;
   gap: 10px;
   font-size: 12.5px;
@@ -176,6 +176,7 @@ h4, .h4 {
   font-weight: 650;
   color: var(--ink);
   font-family: var(--mono);
+  white-space: nowrap;
 }
 .verdict-line-row .verdict-line-info {
   font-size: 12.5px;
@@ -190,6 +191,7 @@ h4, .h4 {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   text-align: right;
+  white-space: nowrap;
 }
 .verdict-line-row.ok .verdict-line-dist { color: var(--pass); }
 .verdict-line-row.no .verdict-line-name { color: var(--fail); }
@@ -230,12 +232,11 @@ h4, .h4 {
   white-space: nowrap;
 }
 
-/* 五线状态行 */
+/* 判定行容器: 纵向堆叠, 每个判定行 (verdict-line-row) 占满一行 */
 .verdict-lines {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 22px;
+  flex-direction: column;
+  gap: 2px;
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--hairline);
@@ -282,6 +283,37 @@ h4, .h4 {
 
 .verdict-fail-title { margin-top: 10px; font-weight: 650; font-size: 12.5px; color: var(--fail); }
 .verdict-fail-item { font-size: 12.5px; color: var(--fail); margin-top: 3px; }
+
+/* 外镜三边采样子行: 视觉缩进展示 AB/BT/TA 可见采样 (主行的证据补充) */
+.verdict-edge-detail {
+  display: flex;
+  gap: 12px;
+  padding: 0 0 6px 24px;
+  margin-top: -2px;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.verdict-edge-detail .edge-item { color: var(--faint); }
+.verdict-edge-detail .edge-item.edge-fail { color: var(--fail); }
+
+/* 外镜球面拟合 (栏内底部): SR/残差/交叉校核, 带分隔线, 竖虚线贯通 */
+.verdict-fit-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline);
+  font-size: 11.5px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.verdict-fit-label { font-weight: 650; color: var(--faint); }
+.verdict-fit-kv b { font-weight: 650; color: var(--ink); }
 
 /* ============================================================
    参数卡
