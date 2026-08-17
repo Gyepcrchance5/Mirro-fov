@@ -2,7 +2,7 @@
  * 外后视镜视野校核 — 凸球面镜 (GB 15084-2022 II/III 类, 先做左外 LHD)
  *
  * 与内后视镜 (平面镜 + 五线法) 是另一套建模:
- *   - 镜面: 凸球面 (SR=1320mm), 非矩形边界
+ *   - 镜面: 凸球面 (SR 依车型), 非矩形边界
  *   - 旋转: 绕转向器轴线 (非球铰 pivot)
  *   - 法规区: 地面两个三角形区域 (III 类: 近 1m@眼后4m, 远 4m@眼后20m; 数值可被 regulation 覆盖)
  *   - 判据: 边界线可见 — 三角形三条边界线经镜面反射后全部可被中心眼看到 → PASS
@@ -32,7 +32,7 @@ class DoorPanel {
 class ExteriorMirror {
   /**
    * @param {Object} opts
-   * @param {number} opts.radius - 球面曲率半径 SR (m, 法规 1.320)
+   * @param {number} opts.radius - 球面曲率半径 SR (m)
    * @param {number[]} opts.sphereCenter - 球心 (整车坐标, m; 凸球球心在镜面后方 R 处)
    * @param {number[][]} opts.outline - 反射面边界点 (N≥4, 在球面上, 整车坐标 m; CATIA 手动标)
    * @param {number[]} opts.turretAxisPoint - 转向器轴线过点 (整车坐标 m)
