@@ -1265,8 +1265,55 @@
     } finally { btn.disabled = false; btn.textContent = '保存并校核'; }
   }
 
+  // ====== 供应商 STEP 标注要求 (一键复制给供应商) ======
+  const INTERIOR_SPEC_TEXT = `【内后视镜 STEP 标注要求】
+请在 STEP 文件内，对以下几何实体命名标注（赋实体名）：
+
+【点的标注】CARTESIAN_POINT
+· 球铰 —— 镜片球铰中心点
+· 镜心 —— 镜面 yaw=pitch=0 时的中心点
+· 眼点左 / 眼点右 —— 驾驶员左右眼点
+· 地面前 / 地面后 —— 地面前后参考点
+
+【面的标注】ADVANCED_FACE
+· 镜片 —— 镜片面
+· 后挡风 —— 后挡风外框面
+
+【线的标注】曲线（可选）
+· curb0 ground line —— 地面参考线
+
+坐标系：整车 X+后方、Y+乘客右、Z+上方，单位 mm。`;
+
+  const EXTERIOR_SPEC_TEXT = `【外后视镜 STEP 标注要求】
+请在 STEP 文件内，对以下几何实体命名标注（赋实体名）：
+
+【面的标注】ADVANCED_FACE
+· 镜片左 / 镜片右 —— 左右凸球面镜片面
+
+【坐标系的标注】AXIS2_PLACEMENT_3D
+· 旋转轴左 / 旋转轴右 —— 镜体坐标系（放旋转中心 p1）
+
+【点的标注】CARTESIAN_POINT
+· 眼点左 / 眼点右 —— 驾驶员左右眼点
+· 地面前 / 地面后 —— 地面前后参考点
+· 车门左 / 车门右 —— 车门蒙皮主面最外点
+
+坐标系：整车 X+后方、Y+乘客右、Z+上方，单位 mm。`;
+
+  async function copySupplierSpec(text, btn) {
+    try {
+      await navigator.clipboard.writeText(text);
+      const orig = btn.textContent;
+      btn.textContent = '已复制 ✓';
+      setTimeout(() => { btn.textContent = orig; }, 2000);
+    } catch (e) {
+      alert('复制失败: ' + e.message);
+    }
+  }
+
   function initWizardExterior() {
     $('wiz-ext-back').addEventListener('click', () => showPage('mirror-type'));
+    $('wiz-ext-copy-spec').addEventListener('click', () => copySupplierSpec(EXTERIOR_SPEC_TEXT, $('wiz-ext-copy-spec')));
     $('wiz-ext-upload-btn').addEventListener('click', () => doWizExtUpload());
     $('wiz-ext-step').addEventListener('change', () => doWizExtUpload());
     $('wiz-ext-save-btn').addEventListener('click', doWizExtSave);
@@ -1534,6 +1581,7 @@
 
   function initWizardInterior() {
     $('wiz-int-back').addEventListener('click', () => showPage('mirror-type'));
+    $('wiz-int-copy-spec').addEventListener('click', () => copySupplierSpec(INTERIOR_SPEC_TEXT, $('wiz-int-copy-spec')));
     $('wiz-int-upload-btn').addEventListener('click', () => doWizIntUpload());
     $('wiz-int-step').addEventListener('change', () => doWizIntUpload());
     $('wiz-int-save-btn').addEventListener('click', doWizIntSave);

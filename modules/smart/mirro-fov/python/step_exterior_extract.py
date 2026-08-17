@@ -200,6 +200,8 @@ ALIAS_GROUND_FRONT = ['地面前', 'GROUND_FRONT']
 ALIAS_GROUND_REAR = ['地面后', 'GROUND_REAR']
 ALIAS_DOOR_LEFT = ['车门左', 'DOOR_OUTER_LEFT']
 ALIAS_DOOR_RIGHT = ['车门右', 'DOOR_OUTER_RIGHT']
+ALIAS_MIRROR_FACE_LEFT = ['镜片左', 'MIRROR_FACE_LEFT']
+ALIAS_MIRROR_FACE_RIGHT = ['镜片右', 'MIRROR_FACE_RIGHT']
 
 
 def decode_step_name(s):
@@ -363,6 +365,28 @@ def find_named_points(entities, points):
     return named
 
 
+def find_named_mirror_faces(entities):
+    """找命名的镜片面 (镜片左/镜片右), 返回 {side: face_eid}。
+    命名优先于几何识别 (整车 STEP 多球面时避免误识)。
+    """
+    named = {}
+    for eid, (t, args) in entities.items():
+        if t != "ADVANCED_FACE":
+            continue
+        toks = scs._split_top_level(args)
+        if len(toks) < 2:
+            continue
+        raw = toks[0].strip()
+        if len(raw) < 2 or raw[0] != "'" or raw[-1] != "'":
+            continue
+        name = decode_step_name(raw[1:-1]).strip()
+        if name in ALIAS_MIRROR_FACE_LEFT and 'left' not in named:
+            named['left'] = eid
+        elif name in ALIAS_MIRROR_FACE_RIGHT and 'right' not in named:
+            named['right'] = eid
+    return named
+
+
 def _pt_to_m(p):
     return [round(float(p[0]) / 1000, 6), round(float(p[1]) / 1000, 6), round(float(p[2]) / 1000, 6)]
 
@@ -381,6 +405,7 @@ def extract_exterior(entities, points, step_name="step", manual=None):
 
     frames = find_mirror_frames(entities, points, spheres)
     named = find_named_points(entities, points)
+    named_faces = find_named_mirror_faces(entities)
     if not frames:
         print("  ⚠️ 未找到镜体坐标系 (AXIS2_PLACEMENT_3D), 轴线回退默认 [0,1,0]+轮廓质心", file=sys.stderr)
 
@@ -388,7 +413,11 @@ def extract_exterior(entities, points, step_name="step", manual=None):
     mirrors = {}
     for s in spheres:
         side = "right" if s['center'][1] > 0 else "left"
-        faces = find_sphere_faces(s['id'], entities)
+        if side in named_faces:
+            faces = [named_faces[side]]
+            print(f"  ℹ️ {side}: 命名镜片面 #{named_faces[side]}")
+        else:
+            faces = find_sphere_faces(s['id'], entities)
         best, best_face = None, None
         for fid in faces:
             outline = extract_outline(fid, entities, points)

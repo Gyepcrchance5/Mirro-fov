@@ -6,7 +6,7 @@
   <title>GB 15084 后视镜视野校核系统</title>
   <!-- Bootstrap 5 CDN (FLATLY 风格) -->
   <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.3/dist/flatly/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260817i">
+  <link rel="stylesheet" href="style.css?v=20260817j">
   <!-- Plotly.js CDN -->
   <script src="https://cdn.plot.ly/plotly-3.0.0.min.js"></script>
 </head>
@@ -251,7 +251,10 @@
 
             <!-- 上传整车 STEP -->
             <div class="wizard-field">
-              <label class="wizard-label">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
+              <div class="d-flex justify-content-between align-items-center">
+                <label class="wizard-label mb-0">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
+                <button id="wiz-ext-copy-spec" type="button" class="btn btn-outline-accent btn-sm">复制供应商要求</button>
+              </div>
               <input id="wiz-ext-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
               <div class="wizard-actions">
                 <button id="wiz-ext-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
@@ -312,7 +315,10 @@
 
             <!-- 上传整车 STEP -->
             <div class="wizard-field">
-              <label class="wizard-label">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
+              <div class="d-flex justify-content-between align-items-center">
+                <label class="wizard-label mb-0">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
+                <button id="wiz-int-copy-spec" type="button" class="btn btn-outline-accent btn-sm">复制供应商要求</button>
+              </div>
               <input id="wiz-int-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
               <div class="wizard-actions">
                 <button id="wiz-int-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
@@ -567,7 +573,7 @@
 
   </div>
 
-  <script src="app.js?v=20260817i"></script>
+  <script src="app.js?v=20260817j"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>
