@@ -1,6 +1,6 @@
 {
   "name": "mirro-fov",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "GB 15084 内后视镜视野法规校核工具",
   "main": "_test_server.js",
   "scripts": {
