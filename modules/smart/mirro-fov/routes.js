@@ -616,9 +616,14 @@ router.post('/api/vehicles/save', jsonParser, (req, res) => {
     existing.ground.front_mid = body.gfMM.map(v => v / 1000);
     existing.ground.rear_mid = body.grMM.map(v => v / 1000);
 
-    existing.rear_window.outline = dedupePoints(body.rwMM || []).map(p => p.map(v => v / 1000));
-    existing.rear_window.transparent_zone = (body.rwTMM || []).map(p => p.map(v => v / 1000));
-    // 保留 rear_window.outline_path 不动 (旧车后挡风轮廓文件)
+    // 后挡风: 保留现有 inline 轮廓 / outline_path 不动 (STEP 提取的完整轮廓, 手动编辑不覆盖)。
+    // 新流程已删前端 rwMM/rwTMM, 无这些字段时不清空 outline (仅旧手动数据向后兼容才更新)。
+    if (Array.isArray(body.rwMM) && body.rwMM.length) {
+      existing.rear_window.outline = dedupePoints(body.rwMM).map(p => p.map(v => v / 1000));
+    }
+    if (Array.isArray(body.rwTMM) && body.rwTMM.length) {
+      existing.rear_window.transparent_zone = body.rwTMM.map(p => p.map(v => v / 1000));
+    }
 
     // 全新文件补默认 (已有车型保留原 regulation / visualization / tolerance)
     if (!existing.regulation) existing.regulation = { standard: 'GB 15084', mirror_class: 'I', far_distance: 60.0, required_width_at_far: 20.0 };

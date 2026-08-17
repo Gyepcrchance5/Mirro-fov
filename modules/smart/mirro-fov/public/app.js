@@ -17,6 +17,11 @@
   };
   const SHORT_EP = { 'BL': 'BL', 'BR': 'BR', '+X': '+X' };
 
+  // 视图高度自适应常量 (px): 容器高度 = 内容等比例 + 顶部留白 + 底部(轴标题+图例)
+  const PLOT_MARGIN_T = 20;   // 顶部留白
+  const PLOT_AXIS_B = 54;     // x 轴标题 + 刻度高度
+  const PLOT_LEGEND_H = 36;   // 底部横向图例一行高度
+
   // ====== DOM refs ======
   const $ = id => document.getElementById(id);
   const elYaw = $('yaw'), elPitch = $('pitch');
@@ -372,17 +377,20 @@
         traces.push({
           x: [lx], y: [ly], mode: 'markers+text',
           marker: { size: 13, color, symbol, line: { color: 'black', width: 1 } },
-          text: [short], textposition: pos, name: full,
+          text: [short], textposition: pos, name: full, showlegend: false,
           hovertemplate: `${full}<br>lx=%{x:.1f} ly=%{y:.1f}<extra></extra>`,
         });
-        // 最外点(中心眼 3 线)到边框距离 — 红色密集虚线 (对齐 Python: 减法 + 避让)
+        // 最外点(中心眼 3 线)到对应边框距离 — 红色密集虚线 (点↔边一一对应, 不随距离变)
         if (i < 3) {
           const ep = ld.endpointLabel;
+          // 真实轮廓的对应边界 (轮廓可能不对称, 用 min/max 而非对称 ±hw/±hh)
+          const minX = (m.outline && m.outline.xs && m.outline.xs.length) ? Math.min(...m.outline.xs) : -hw;
+          const maxX = (m.outline && m.outline.xs && m.outline.xs.length) ? Math.max(...m.outline.xs) : hw;
+          const maxY = (m.outline && m.outline.ys && m.outline.ys.length) ? Math.max(...m.outline.ys) : hh;
           let edgeX, edgeY, dist;
-          if (ep === 'BL') { edgeX = -hw; edgeY = ly; dist = Math.abs(lx + hw); }
-          else if (ep === 'BR') { edgeX = hw; edgeY = ly; dist = Math.abs(lx - hw); }
-          else { edgeX = lx; edgeY = hh; dist = Math.abs(ly - hh); }
-          // 距边标注: 法规规范要求红色密集虚线 + 红字 — 全部 5 线统一样式
+          if (ep === 'BL') { edgeX = minX; edgeY = ly; dist = Math.abs(lx - minX); }
+          else if (ep === 'BR') { edgeX = maxX; edgeY = ly; dist = Math.abs(lx - maxX); }
+          else { edgeX = lx; edgeY = maxY; dist = Math.abs(ly - maxY); }
           shapes.push({ type: 'line', x0: lx, y0: ly, x1: edgeX, y1: edgeY,
             line: { color: '#ff3b30', width: 1.5, dash: 'dot' } });
           const [tx, ty] = dimLabelPos(lx, ly, edgeX, edgeY, triCentroid);
@@ -402,12 +410,12 @@
                scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       yaxis: { title: 'ly (镜面上向, mm)', range: [-hh - pad, hh + pad],
                gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
-      margin: { l: 50, r: 20, t: 20, b: 40 },
+      margin: { l: 50, r: 20, t: PLOT_MARGIN_T, b: PLOT_AXIS_B + PLOT_LEGEND_H },
       paper_bgcolor: '#fff', plot_bgcolor: '#fff',
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
       annotations: [Object.assign({ text: pass ? '<b>PASS</b>' : '<b>FAIL</b>' }, passBadge)].concat(annotations),
       shapes,
-      legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
+      legend: { x: 0.5, y: -0.2, xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
     // 显式高度: 容器宽度 / 内容比例 → Plotly 渲染时拿到像素值
     // (不能用 CSS aspect-ratio — Plotly 初始化时 CSS 高度可能未解析)
@@ -415,7 +423,7 @@
     if (viewEl) {
       const w = viewEl.parentElement.clientWidth - 20; // panel-frame padding
       const contentRatio = (hw * 2 + pad * 2) / (hh * 2 + pad * 2);
-      viewEl.style.height = Math.max(120, Math.round(w / contentRatio)) + 'px';
+      viewEl.style.height = Math.max(120, Math.round(w / contentRatio) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H) + 'px';
     }
     Plotly.react('mirror-view', traces, layout, { responsive: true });
   }
@@ -464,7 +472,7 @@
         x: [lx], y: [ly], mode: 'markers+text',
         marker: { size: 13, color, symbol: 'circle', line: { color: 'black', width: 1 } },
         text: [cl.label], textposition: pos,
-        name: cl.label,
+        name: cl.label, showlegend: false,
         hovertemplate: `${cl.label}<br>u=%{x:.1f} v=%{y:.1f}mm<extra></extra>`,
       });
       // 距边距离标注: 中点沿垂直方向偏移, 避开质心 — 对齐 Python _dim_label_pos
@@ -502,19 +510,19 @@
                scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       yaxis: { title: 'v (玻璃上向, mm)', range: [Math.min(...ys) - pad, Math.max(...ys) + pad],
                gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
-      margin: { l: 50, r: 20, t: 20, b: 40 },
+      margin: { l: 50, r: 20, t: PLOT_MARGIN_T, b: PLOT_AXIS_B + PLOT_LEGEND_H },
       paper_bgcolor: '#fff', plot_bgcolor: '#fff',
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
       annotations: [Object.assign({ text: pass ? '<b>PASS</b>' : '<b>FAIL</b>' }, passBadge)].concat(annotations),
       shapes,
-      legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
+      legend: { x: 0.5, y: -0.2, xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
     // 显式高度: 容器宽度 / 内容比例 → 填满无变形无留白
     const rwEl = $('rear-window-view');
     if (rwEl) {
       const rwCw = rwEl.parentElement.clientWidth - 20;
       const ratio = (rwW + pad * 2) / (rwH + pad * 2);
-      rwEl.style.height = Math.max(120, Math.round(rwCw / ratio)) + 'px';
+      rwEl.style.height = Math.max(120, Math.round(rwCw / ratio) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H) + 'px';
     }
     Plotly.react('rear-window-view', traces, layout, { responsive: true });
     const rwCount = $('rw-count');
@@ -554,7 +562,7 @@
       }
     }
     elVerdictLines.innerHTML = lines;
-    // 后挡风三线穿透明细 (镜片→镜面反射→后挡风透光区→眼点)
+    // 后挡风三线命中明细 (镜片→镜面反射→后挡风外框→眼点) — 命中后挡风即合格
     let rwLines = '';
     if (data.lineDetails && data.rearWindow && data.rearWindow.centerLines) {
       for (let i = 0; i < data.lineDetails.length; i++) {
@@ -562,11 +570,10 @@
         const cl = data.rearWindow.centerLines[i];
         if (!cl) continue;
         const through = cl.through === true;
-        const hit = !!cl.hit2D;
-        const cls = !hit ? 'no' : (through ? 'ok' : 'warn');
-        const status = !hit ? '✗ 未穿透' : (through ? '✓ 穿透' : '✗ 未在透光区');
-        const color = !hit ? 'var(--fail)' : (through ? 'var(--pass)' : '#ff9f0a');
-        const dist = (hit && cl.dist != null) ? `${cl.dist.toFixed(1)} mm` : '—';
+        const cls = through ? 'ok' : 'no';
+        const status = through ? '✓ 命中' : '✗ 未命中';
+        const color = through ? 'var(--pass)' : 'var(--fail)';
+        const dist = cl.dist != null ? `${cl.dist.toFixed(1)} mm` : '—';
         rwLines += `<div class="verdict-line-row ${cls}">` +
                    `<span class="verdict-line-name">${ld.eyeLabel}→${ld.endpointLabel}</span>` +
                    `<span class="verdict-line-info" style="color:${color}">${status}</span>` +
@@ -1861,10 +1868,10 @@
     const layout = {
       xaxis: { title: 'u (镜面右向, mm)', range: [Math.min(...us) - pad, Math.max(...us) + pad], scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       yaxis: { title: 'v (镜面上向, mm)', range: [Math.min(...vs) - pad, Math.max(...vs) + pad], gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
-      margin: { l: 50, r: 20, t: 20, b: 40 }, paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+      margin: { l: 50, r: 20, t: PLOT_MARGIN_T, b: PLOT_AXIS_B + PLOT_LEGEND_H }, paper_bgcolor: '#fff', plot_bgcolor: '#fff',
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
       annotations: [Object.assign({ text: pass ? '<b>PASS</b>' : '<b>FAIL</b>' }, badge)],
-      legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
+      legend: { x: 0.5, y: -0.2, xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
     Plotly.react(divId, traces, layout, { responsive: true });
   }
