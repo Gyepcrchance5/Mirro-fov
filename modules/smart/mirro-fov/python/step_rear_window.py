@@ -176,6 +176,79 @@ def mirror_half_outline(pts, tol_mm=2.0):
     return np.array(full)
 
 
+def convex_hull_yz(pts_3d):
+    """3D 点在 Y-Z 投影上的凸包 (monotone chain), 返回 3D 凸包顶点 (未闭合)。
+
+    后挡风法线朝 -X, pointInPolygon3D 也投到 Y-Z 平面 → 两者投影一致。
+    """
+    keyed = {}
+    for p in pts_3d:
+        key = (round(p[1], 2), round(p[2], 2))  # (Y, Z) 去重
+        if key not in keyed:
+            keyed[key] = p
+    keys = sorted(keyed.keys())
+    if len(keys) < 3:
+        return [keyed[k] for k in keys]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower = []
+    for p in keys:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper = []
+    for p in reversed(keys):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    hull_keys = lower[:-1] + upper[:-1]
+    return [keyed[k] for k in hull_keys]
+
+
+def resample_outline(pts, spacing_mm=3.0):
+    """对闭合轮廓重新均匀采样 (凸包顶点不均匀: 弧形边密集/直线边稀疏)。"""
+    out = []
+    n = len(pts)
+    for i in range(n):
+        a = np.array(pts[i])
+        b = np.array(pts[(i + 1) % n])
+        seg_len = float(np.linalg.norm(b - a))
+        if seg_len < 1e-9:
+            continue
+        n_seg = max(1, int(seg_len / spacing_mm) + 1)
+        for j in range(n_seg):
+            t = j / n_seg
+            out.append((a + (b - a) * t).tolist())
+    return out
+
+
+def merge_face_outlines(faces, entities, points, n=25):
+    """合并多个同名面的轮廓 (供应商把零件拆成多个 patch)。
+
+    凸包法: 各面轮廓点合并 → Y-Z 投影凸包 → 均匀重采样 → 完整外边界。
+    失败返回 None。
+    """
+    all_pts = []
+    for fid, name, bounds, tokens in faces:
+        pts, _ = sample_face_boundary_stitched(fid, bounds, entities, points, n)
+        if pts and len(pts) >= 3:
+            all_pts.extend(pts)
+    if len(all_pts) < 6:
+        return None
+    hull = convex_hull_yz(all_pts)
+    if len(hull) < 4:
+        return None
+    # 凸包顶点点距不均匀, 重新均匀采样 (3mm) 避免自检闸门误报断点
+    outline = resample_outline(hull, spacing_mm=3.0)
+    if len(outline) < 4:
+        return None
+    if np.linalg.norm(np.array(outline[0]) - np.array(outline[-1])) > 1.0:
+        outline.append(outline[0])
+    return outline
+
+
 def geometry_fallback_faces(entities, points):
     """关键词匹配失败时按几何特征找后挡风面 (两级筛选):
     1) 粗筛: 原始采样跨度合理 (<2000mm) + Y/Z 跨度在窗口量级
@@ -321,45 +394,59 @@ def main():
             return
         print(f"  手动指定: #{target[0]} {target[1]!r}")
     else:
-        # 自动: 按 锚定缝合后的真实跨度 评分 (原始粗采样跨度被曲线延伸污染, 不可信)
+        # 自动: 多同名面时合并 (供应商可能把零件拆成多个 patch), 单面取面积最大
         print(f"\n=== 2. 从 {len(faces)} 个候选面选后挡风 ===")
-        best = None
-        best_score = -1
-        for fid, name, bounds, _ in faces:
-            pts, _ = sample_face_boundary_stitched(fid, bounds, entities, points, 25)
-            if not pts or len(pts) < 5:
-                continue
-            arr = np.array(pts)
-            y_span = float(np.ptp(arr[:, 1]))
-            z_span = float(np.ptp(arr[:, 2]))
-            # 半模面 Y 跨只有一半 (如 571 vs 全 1143), 用 2×Y 估全宽
-            eff_y = y_span * 2 if (arr[:, 1].min() > -5 or arr[:, 1].max() < 5) else y_span
-            score = eff_y * z_span
-            print(f"  #{fid} {name!r}: Y跨{y_span:.0f} Z跨{z_span:.0f} (score={score:.0f})")
-            if y_span > 300 and z_span > 100 and score > best_score:
-                best_score = score
-                best = (fid, name, bounds)
-        if best is None:
-            print("  ❌ 没有面符合后挡风尺寸")
-            print("  💡 用 --list 查看所有面, 再用 --face-id #ID 手动指定")
-            return
-        target = best
-        print(f"\n  ✅ 选定: #{target[0]} {target[1]!r}")
+        if len(faces) > 1:
+            target = None  # 多面合并模式
+            print(f"  ✅ {len(faces)} 个同名面 → 合并提取")
+        else:
+            best = None
+            best_score = -1
+            for fid, name, bounds, _ in faces:
+                pts, _ = sample_face_boundary_stitched(fid, bounds, entities, points, 25)
+                if not pts or len(pts) < 5:
+                    continue
+                arr = np.array(pts)
+                y_span = float(np.ptp(arr[:, 1]))
+                z_span = float(np.ptp(arr[:, 2]))
+                # 半模面 Y 跨只有一半 (如 571 vs 全 1143), 用 2×Y 估全宽
+                eff_y = y_span * 2 if (arr[:, 1].min() > -5 or arr[:, 1].max() < 5) else y_span
+                score = eff_y * z_span
+                print(f"  #{fid} {name!r}: Y跨{y_span:.0f} Z跨{z_span:.0f} (score={score:.0f})")
+                if y_span > 300 and z_span > 100 and score > best_score:
+                    best_score = score
+                    best = (fid, name, bounds)
+            if best is None:
+                print("  ❌ 没有面符合后挡风尺寸")
+                print("  💡 用 --list 查看所有面, 再用 --face-id #ID 手动指定")
+                return
+            target = best
+            print(f"\n  ✅ 选定: #{target[0]} {target[1]!r}")
 
-    fid, name, bounds = target
-
-    # ─── 3. 提取完整边界 ────────────────────────────────
+    # ─── 3. 提取轮廓 (多面合并 或 单面) ──────────────────
     print("STEP_PROGRESS|缝合轮廓边...")
-    print(f"\n=== 3. 提取完整边界 (面 #{fid}, 每边 {args.n} 点) ===")
-    outline, edge_info = sample_face_boundary_stitched(fid, bounds, entities, points, args.n)
-    if not outline or len(outline) < 4:
-        print("  ❌ 边界提取失败 (点太少)")
-        return
-
-    print(f"  边数: {len(edge_info)}")
-    for ei in edge_info:
-        print(f"    #{ei['id']} {ei['type']} len={ei['length']}mm {ei['pts']}点 {ei['status']}")
-    print(f"  轮廓总点数: {len(outline)}")
+    if target is None:
+        # 多面合并 (供应商拆 patch)
+        print(f"\n=== 3. 合并 {len(faces)} 个同名面轮廓 ===")
+        outline = merge_face_outlines(faces, entities, points, args.n)
+        edge_info = []
+        if not outline or len(outline) < 4:
+            print("  ❌ 多面合并失败 (点太少)")
+            return
+        fid = faces[0][0]
+        name = f'{len(faces)}个面合并'
+        print(f"  合并后 {len(outline)} 点")
+    else:
+        fid, name, bounds = target
+        print(f"\n=== 3. 提取完整边界 (面 #{fid}, 每边 {args.n} 点) ===")
+        outline, edge_info = sample_face_boundary_stitched(fid, bounds, entities, points, args.n)
+        if not outline or len(outline) < 4:
+            print("  ❌ 边界提取失败 (点太少)")
+            return
+        print(f"  边数: {len(edge_info)}")
+        for ei in edge_info:
+            print(f"    #{ei['id']} {ei['type']} len={ei['length']}mm {ei['pts']}点 {ei['status']}")
+        print(f"  轮廓总点数: {len(outline)}")
 
     # ─── 3.5 半模检测: 轮廓 Y 全在中心线一侧 (含 0) → 半模, 镜像成完整轮廓 ──
     # (后挡风与镜面一样可能存在半边建模; 完整轮廓 Y 应跨两侧)

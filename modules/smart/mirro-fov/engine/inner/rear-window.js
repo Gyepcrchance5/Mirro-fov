@@ -5,7 +5,7 @@
  * 共享的 2D 几何谓词 (pointInPolygon2D/edgeDistanceTo) 已在 engine/shared/polygon.js。
  *
  * 后挡风: CAS 外框 (outline, N 点) + 透光区 (transparentZone, M 点, 可选)。
- * through_transparent 判定基于透光区 (若为 None 则退化用 outline)。
+ * through 判定基于后挡风外框 outline (暂不考虑透光区)。
  * 黑边 = outline 与 transparentZone 之间的区域, 距离要求由其他人员单独测量。
  */
 const { vec3Sub, vec3Add, vec3Scale, vec3Dot, vec3Cross, vec3Norm, vec3Normalize } = require('../shared/geometry');
@@ -31,10 +31,21 @@ function buildRearWindow(outline, transparentZone) {
   for (const p of outline) { planePoint[0] += p[0]; planePoint[1] += p[1]; planePoint[2] += p[2]; }
   planePoint[0] /= nPts; planePoint[1] /= nPts; planePoint[2] /= nPts;
 
-  // plane_normal = normalize((p1-p0) × (p2-p0)), 定向朝 −X (车内侧)
-  const v1 = vec3Sub(outline[1], outline[0]);
-  const v2 = vec3Sub(outline[2], outline[0]);
-  let n = vec3Cross(v1, v2);
+  // plane_normal: 用「不共线」的 3 点叉积 (前 3 点可能共线 → 法线不稳定)
+  // 取: 首点 + 离首点最远的点 + 离该连线最远的点, 三点必不共线
+  const p0 = outline[0];
+  let p1 = outline[1], maxD = -1;
+  for (const p of outline) {
+    const d = vec3Norm(vec3Sub(p, p0));
+    if (d > maxD) { maxD = d; p1 = p; }
+  }
+  const dir = vec3Normalize(vec3Sub(p1, p0));
+  let p2 = outline[1], maxCross = -1;
+  for (const p of outline) {
+    const cross = vec3Norm(vec3Cross(vec3Sub(p, p0), dir));
+    if (cross > maxCross) { maxCross = cross; p2 = p; }
+  }
+  let n = vec3Cross(vec3Sub(p1, p0), vec3Sub(p2, p0));
   const norm = vec3Norm(n);
   if (norm < 1e-12) throw new Error('后挡风轮廓退化, 无法拟合平面法线');
   n = vec3Scale(n, 1 / norm);
@@ -76,13 +87,14 @@ function pointInPolygon3D(point, polygon, planeNormal) {
 }
 
 /**
- * 检查线段是否穿过后挡风玻璃开口 (透光区内) — 等价 Python check_line_through_rear_window
+ * 检查线段是否命中后挡风外框 (outline 内) — 等价 Python check_line_through_rear_window
  * @returns {{through:boolean, hit:number[]|null}}
  */
 function checkLineThroughRearWindow(p1, p2, rearWindow) {
   const hit = lineSegmentPlaneIntersect(p1, p2, rearWindow.planePoint, rearWindow.planeNormal);
   if (hit === null) return { through: false, hit: null };
-  const through = pointInPolygon3D(hit, rearWindow.tz, rearWindow.planeNormal);
+  // 判据: 命中后挡风外框 outline 即合格 (暂不考虑透光区 tz)
+  const through = pointInPolygon3D(hit, rearWindow.outline, rearWindow.planeNormal);
   return { through, hit };
 }
 

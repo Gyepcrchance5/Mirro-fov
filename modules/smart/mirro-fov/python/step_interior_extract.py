@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import step_curve_sampler as scs
 import step_topology as st
+import step_rear_window as srw
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -490,7 +491,14 @@ def extract_interior(entities, points, step_name="step"):
     rw_outline = None
     rw_tz = None
     rw_faces = find_named_face(entities, ALIAS_FACE_REAR_WINDOW)
-    if rw_faces:
+    if len(rw_faces) > 1:
+        # 多面合并 (供应商可能把后挡风拆成多个 patch)
+        faces4 = [(fid, '', bounds, None) for fid, bounds in rw_faces]
+        merged = srw.merge_face_outlines(faces4, entities, points, 25)
+        if merged:
+            rw_outline = [[round(p[0] / 1000, 6), round(p[1] / 1000, 6), round(p[2] / 1000, 6)] for p in merged]
+            print(f"  ✅ 后挡风: 合并 {len(rw_faces)} 个面 → {len(rw_outline)} 点")
+    elif rw_faces:
         # 取最大面作外框
         best = None
         for fid, bounds in rw_faces:
