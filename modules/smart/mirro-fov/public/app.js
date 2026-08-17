@@ -63,8 +63,7 @@
       xhr.open('POST', url);
       const headers = Object.assign({ 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, opts.headers || {});
       for (const k of Object.keys(headers)) xhr.setRequestHeader(k, headers[k]);
-      // 节流: 大文件(141MB)onprogress 每秒触发数百次, 直接更新 DOM 会冻结浏览器
-      // 最多 500ms 更新一次, 避免 DOM 写入风暴
+      // 节流: onprogress 每秒触发数百次, 直接更新 DOM 会冻结浏览器
       let lastProgress = 0;
       xhr.upload.onprogress = (e) => {
         if (!e.lengthComputable || typeof opts.onProgress !== 'function') return;

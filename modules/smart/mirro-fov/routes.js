@@ -939,7 +939,7 @@ function spawnStepExtract(opts) {
   const timeoutMs = Math.min(1800000, 120000 + sizeMB * 1000);
   console.log(`[routes][spawn] ${progressKey}: size=${sizeMB.toFixed(1)}MB → timeout=${Math.round(timeoutMs / 1000)}s`);
   const args = [path.join(__dirname, 'python', script), stepPath].concat(extraArgs || []);
-  const child = spawn('python', args, { cwd: PY_PROJECT, shell: process.platform === 'win32' });
+  const child = spawn('python', args, { cwd: PY_PROJECT });
   let done = false;
   let stderrTail = '';
   child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-800); });
