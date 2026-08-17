@@ -16,12 +16,11 @@
     edgeLine: '#9a9aa0',     // 弱灰 (距离线)
   };
   const SHORT_EP = { 'BL': 'BL', 'BR': 'BR', '+X': '+X' };
-  const RW_LABELS = ['左上', '中上', '右上', '右中', '右下', '中下', '左下'];
 
   // ====== DOM refs ======
   const $ = id => document.getElementById(id);
   const elYaw = $('yaw'), elPitch = $('pitch');
-  const elWidth = $('width'), elHeight = $('height'), elCornerR = $('corner-r');
+  const elWidth = $('width'), elHeight = $('height');
   const elPvX = $('pvt-x'), elPvY = $('pvt-y'), elPvZ = $('pvt-z');
   const elCzX = $('center-zero-x'), elCzY = $('center-zero-y'), elCzZ = $('center-zero-z');
   const elEyeX = $('eye-x'), elEyeY = $('eye-y'), elEyeZ = $('eye-z');
@@ -42,7 +41,6 @@
   let currentPath = null;
   let curFarDist = 60.0;   // 当前车型法规远距 (auto-search 用, 默认 GB 15084 60m)
   let curReqWidth = 20.0;  // 当前车型法规远距宽度 (默认 20m)
-  let rwDirty = false; // 后挡风 CAS 卡是否被用户编辑过
   let currentOutlineLocal = null; // 真实反射区轮廓 [[lx,ly] mm] (STEP 采样, 从车型加载)
   let currentRwOutline = null;   // 后挡风完整轮廓 [[x,y,z] m] (STEP 采样, 从车型加载)
 
@@ -130,7 +128,7 @@
   function readParams() {
     return {
       widthMM: pv(elWidth, 224.796), heightMM: pv(elHeight, 50.794),
-      cornerRadiusMM: pv(elCornerR, 10.0),
+      cornerRadiusMM: 10.0,
       yawDeg: pv(elYaw, -23.5), pitchDeg: pv(elPitch, 5.0),
       pvMM: [pv(elPvX, 2883.07), pv(elPvY, 0), pv(elPvZ, 1441.017)],
       czMM: [pv(elCzX, 2909.215), pv(elCzY, 0.007), pv(elCzZ, 1441.88)],
@@ -138,12 +136,6 @@
       ipdMM: pv(elIpd, 65),
       gfMM: [pv(elGfX, 500), pv(elGfY, 0), pv(elGfZ, 193.209)],
       grMM: [pv(elGrX, 5900), pv(elGrY, 0), pv(elGrZ, 193.209)],
-      rwMM: Array.from({ length: 7 }, (_, i) => [
-        pv($('rw-c' + i + '-x'), 0), pv($('rw-c' + i + '-y'), 0), pv($('rw-c' + i + '-z'), 0),
-      ]),
-      rwTMM: Array.from({ length: 4 }, (_, i) => [
-        pv($('rw-t' + i + '-x'), 0), pv($('rw-t' + i + '-y'), 0), pv($('rw-t' + i + '-z'), 0),
-      ]),
     };
   }
 
@@ -170,10 +162,7 @@
       eyeCenter: mm(p.eyeMM), ipd: p.ipdMM / 1000,
       groundZ: p.gfMM[2] / 1000,
       ground: { front: mm(p.gfMM), rear: mm(p.grMM) },
-      rearWindow: {
-        outline: currentRwOutline || dedupeOutline(p.rwMM).map(mm),
-        transparentZone: p.rwTMM.map(mm),
-      },
+      rearWindow: currentRwOutline ? { outline: currentRwOutline, transparentZone: null } : null,
       outlineLocal: currentOutlineLocal,
     };
   }
@@ -703,24 +692,13 @@
     currentPath = cfg.path;
     // 填充全部表单
     elYaw.value = cfg.yawDeg; elPitch.value = cfg.pitchDeg;
-    elWidth.value = cfg.widthMM; elHeight.value = cfg.heightMM; elCornerR.value = cfg.cornerRadiusMM;
+    elWidth.value = cfg.widthMM; elHeight.value = cfg.heightMM;
     elPvX.value = cfg.pvMM[0]; elPvY.value = cfg.pvMM[1]; elPvZ.value = cfg.pvMM[2];
     elCzX.value = cfg.czMM[0]; elCzY.value = cfg.czMM[1]; elCzZ.value = cfg.czMM[2];
     elEyeX.value = cfg.eyeMM[0]; elEyeY.value = cfg.eyeMM[1]; elEyeZ.value = cfg.eyeMM[2];
     elIpd.value = cfg.ipdMM;
     elGfX.value = cfg.gfMM[0]; elGfY.value = cfg.gfMM[1]; elGfZ.value = cfg.gfMM[2];
     elGrX.value = cfg.grMM[0]; elGrY.value = cfg.grMM[1]; elGrZ.value = cfg.grMM[2];
-    for (let i = 0; i < 7; i++) {
-      $('rw-c' + i + '-x').value = cfg.rwMM[i][0];
-      $('rw-c' + i + '-y').value = cfg.rwMM[i][1];
-      $('rw-c' + i + '-z').value = cfg.rwMM[i][2];
-    }
-    for (let i = 0; i < 4; i++) {
-      $('rw-t' + i + '-x').value = cfg.rwTMM[i][0];
-      $('rw-t' + i + '-y').value = cfg.rwTMM[i][1];
-      $('rw-t' + i + '-z').value = cfg.rwTMM[i][2];
-    }
-    rwDirty = false;
     currentOutlineLocal = cfg.outlineLocal || null;
     currentRwOutline = cfg.rwOutlineFull || null;
     // 记录法规参数, 供 auto-search 带上 (不同车型可能非 60/20)
@@ -739,24 +717,14 @@
   // 有 STEP 轮廓时, 相关参数卡只读 (轮廓已定义形状, 编辑会破坏一致性)
   function updateReadonlyState(cfg) {
     const hasOutline = !!cfg.outlineLocal;
-    const hasRwOutline = !!cfg.rwOutlineFull;
-    // 镜面尺寸卡 (width/height/corner-r): 有镜面轮廓则只读
-    ['width', 'height', 'corner-r'].forEach(id => {
+    // 镜面尺寸卡 (width/height): 有镜面轮廓则只读
+    ['width', 'height'].forEach(id => {
       const el = $(id);
       if (el) { el.readOnly = hasOutline; el.style.opacity = hasOutline ? '0.6' : ''; }
     });
     // 尺寸卡副标题
     const sizeHeader = document.querySelector('#inner-params-collapse .param-row .col:first-child .card-header small');
     if (sizeHeader) sizeHeader.textContent = hasOutline ? `STEP ${cfg.outlineLocal.length} 点轮廓` : '反射涂层有效区域';
-    // 后挡风 CAS 卡: 有后挡风轮廓则只读
-    for (let i = 0; i < 7; i++) {
-      ['x', 'y', 'z'].forEach(ax => {
-        const el = $('rw-c' + i + '-' + ax);
-        if (el) { el.readOnly = hasRwOutline; el.style.opacity = hasRwOutline ? '0.6' : ''; }
-      });
-    }
-    const rwTitle = $('rw-section-title');
-    if (rwTitle) rwTitle.textContent = hasRwOutline ? `后挡风 STEP ${cfg.rwOutlineFull.length} 点轮廓` : '后挡风 CAS 轮廓 (7 点)';
   }
 
   async function doSave() {
@@ -770,7 +738,6 @@
         pvMM: p.pvMM, czMM: p.czMM,
         eyeMM: p.eyeMM, ipdMM: p.ipdMM,
         gfMM: p.gfMM, grMM: p.grMM,
-        rwMM: p.rwMM, rwTMM: p.rwTMM,
         groundZ: p.gfMM[2],
       });
       await loadVehicles();
@@ -802,7 +769,6 @@
         pvMM: p.pvMM, czMM: p.czMM,
         eyeMM: p.eyeMM, ipdMM: p.ipdMM,
         gfMM: p.gfMM, grMM: p.grMM,
-        rwMM: p.rwMM, rwTMM: p.rwTMM,
         groundZ: p.gfMM[2],
       });
       await loadVehicles();
@@ -942,36 +908,9 @@
     }
   }
 
-  // ====== 后挡风 / 透光区参数卡动态生成 ======
-  function buildRWCard(rowId, idPrefix, labelPrefix, n, labels) {
-    const row = $(rowId);
-    row.innerHTML = '';
-    for (let i = 0; i < n; i++) {
-      const col = document.createElement('div');
-      col.className = 'col';
-      col.style.minWidth = '130px';
-      col.innerHTML = `<div class="card shadow-sm h-100">
-        <div class="card-header py-1 px-2"><div class="card-title mb-0">${labelPrefix}${i + 1}</div><small class="text-muted">${labels[i] || ''}</small></div>
-        <div class="card-body py-2 px-2">
-          <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><small class="unit">mm</small><input id="${idPrefix}${i}-x" type="number" step="any" class="form-control form-control-sm"></div>
-          <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><small class="unit">mm</small><input id="${idPrefix}${i}-y" type="number" step="any" class="form-control form-control-sm"></div>
-          <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><small class="unit">mm</small><input id="${idPrefix}${i}-z" type="number" step="any" class="form-control form-control-sm"></div>
-        </div>
-      </div>`;
-      row.appendChild(col);
-    }
-  }
-
-  // ====== 共享 DOM 初始化 (内镜页: 后挡风卡行 + 按钮事件绑定) ======
+  // ====== 共享 DOM 初始化 (内镜页: 按钮事件绑定) ======
   // 提取为共享函数, initInner 和内镜保存后跳转两处调用 (消除 30 行复制)
   function initInnerDOM() {
-    buildRWCard('rw-row', 'rw-c', '后挡风 CAS 角', 7, RW_LABELS);
-    buildRWCard('tz-row', 'rw-t', '后挡风 透光角', 4, ['透光角1', '透光角2', '透光角3', '透光角4']);
-    for (let i = 0; i < 7; i++) {
-      ['x', 'y', 'z'].forEach(ax => {
-        $('rw-c' + i + '-' + ax).addEventListener('input', () => { rwDirty = true; });
-      });
-    }
     elVerifyBtn.addEventListener('click', doVerify);
     elAutoBtn.addEventListener('click', doAutoSearch);
     $('inner-params-toggle').addEventListener('click', () => toggleParamCollapse('inner-params-toggle', 'inner-params-collapse'));
@@ -1267,6 +1206,8 @@
 
   // ====== 供应商 STEP 标注要求 (一键复制给供应商) ======
   const INTERIOR_SPEC_TEXT = `【内后视镜 STEP 标注要求】
+坐标系：整车坐标系（X+后方、Y+乘客右、Z+上方，单位 mm）
+
 请在 STEP 文件内，对以下几何实体命名标注（赋实体名）：
 
 【点的标注】CARTESIAN_POINT
@@ -1277,14 +1218,11 @@
 
 【面的标注】ADVANCED_FACE
 · 镜片 —— 镜片面
-· 后挡风 —— 后挡风外框面
-
-【线的标注】曲线（可选）
-· curb0 ground line —— 地面参考线
-
-坐标系：整车 X+后方、Y+乘客右、Z+上方，单位 mm。`;
+· 后挡风 —— 后挡风外框面`;
 
   const EXTERIOR_SPEC_TEXT = `【外后视镜 STEP 标注要求】
+坐标系：整车坐标系（X+后方、Y+乘客右、Z+上方，单位 mm）
+
 请在 STEP 文件内，对以下几何实体命名标注（赋实体名）：
 
 【面的标注】ADVANCED_FACE
@@ -1296,9 +1234,7 @@
 【点的标注】CARTESIAN_POINT
 · 眼点左 / 眼点右 —— 驾驶员左右眼点
 · 地面前 / 地面后 —— 地面前后参考点
-· 车门左 / 车门右 —— 车门蒙皮主面最外点
-
-坐标系：整车 X+后方、Y+乘客右、Z+上方，单位 mm。`;
+· 车门左 / 车门右 —— 车门蒙皮主面最外点`;
 
   async function copySupplierSpec(text, btn) {
     try {
@@ -1610,11 +1546,13 @@
       extRawConfig = d.raw || null;
       const set = (id, v) => { const el = $(id); if (el) el.value = v; };
       const L = d.mirrors.left, R = d.mirrors.right;
-      set('ext-sr-fit', L.sr_fit); set('ext-sr-nominal', L.sr_nominal); set('ext-sr-tol', L.sr_tolerance);
+      set('ext-sr-fit', L.sr_fit);
       ['x', 'y', 'z'].forEach((ax, i) => {
         set('ext-c-L-' + ax, L.sphere_center[i]); set('ext-c-R-' + ax, R.sphere_center[i]);
         set('ext-p1-L-' + ax, L.turret_axis_p1[i]); set('ext-p1-R-' + ax, R.turret_axis_p1[i]);
         set('ext-axis-L-' + ax, L.rotation_axis_dir[i]); set('ext-axis-R-' + ax, R.rotation_axis_dir[i]);
+        set('ext-fold-L-' + ax, L.fold_axis_dir ? L.fold_axis_dir[i] : '');
+        set('ext-fold-R-' + ax, R.fold_axis_dir ? R.fold_axis_dir[i] : '');
       });
       setExtAxisHint('L', L.rotation_axis_dir); setExtAxisHint('R', R.rotation_axis_dir);
       ['x', 'y', 'z'].forEach((ax, i) => {
@@ -1625,8 +1563,6 @@
       set('ext-door-L', d.door_panel.door_outer_Y_left); set('ext-door-R', d.door_panel.door_outer_Y_right);
       set('ext-gf', d.ground.front_mid.map(v => v.toFixed(4)).join(', '));
       set('ext-gr', d.ground.rear_mid.map(v => v.toFixed(4)).join(', '));
-      set('ext-w-near', d.regulation.width_near); set('ext-d-near', d.regulation.dist_near);
-      set('ext-w-far', d.regulation.width_far); set('ext-d-far', d.regulation.dist_far);
       $('ext-badge-left').textContent = '左 --'; $('ext-badge-left').className = 'verdict-badge-md';
       $('ext-badge-right').textContent = '右 --'; $('ext-badge-right').className = 'verdict-badge-md';
       $('ext-verdict-detail').textContent = '点击校核';
@@ -1652,7 +1588,7 @@
     } catch (e) { $('ext-status').textContent = '加载失败: ' + e.message; }
   }
 
-  // 轴线补录: 默认 [0,1,0] 时提示补录真轴 (STEP 无法自动提取轴线, 已证无此几何)
+  // 轴线补录: 默认 [0,1,0] 时提示补录真轴 (轴线已从 AXIS2_PLACEMENT_3D 提取, 默认轴为提取失败时的兜底)
   function setExtAxisHint(side, dir) {
     const el = $('ext-axis-hint-' + side);
     if (!el) return;

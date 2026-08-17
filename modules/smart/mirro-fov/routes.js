@@ -142,7 +142,11 @@ function loadVehicleJson(cfgPath) {
       if (rwRaw.outline_mm && rwRaw.outline_mm.length >= 3) {
         rwOutlineFull = rwRaw.outline_mm.map(p => [p[0] / 1000, p[1] / 1000, p[2] / 1000]); // mm→m
       }
-    } catch (e) { /* 缺失/损坏, 退回 4 点简化轮廓 */ }
+    } catch (e) { /* 缺失/损坏, 退回 inline 轮廓 */ }
+  }
+  // 新流程: 后挡风完整轮廓 inline 存于 rear_window.outline (米制, N 点 > 8), 不依赖 outline_path 文件
+  if (!rwOutlineFull && Array.isArray(outline) && outline.length > 8) {
+    rwOutlineFull = outline;
   }
   // 米→毫米 + round3 修约 (对齐 Python dashboard.py: round(×1000,3), 消除浮点精度尾巴)
   const x1000 = v => [round3(v[0] * 1000), round3(v[1] * 1000), round3(v[2] * 1000)];
@@ -1091,7 +1095,7 @@ router.post('/api/interior/extract', (req, res) => {
     spawnStepExtract({
       stepPath, outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
       progressMap: intExtractProgress, progressKey: filename,
-      failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜座) 的整车 STEP',
+      failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜片面) 的整车 STEP',
       success: (result) => res.json({ ok: true, path: outPath, result }),
       failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
     });
@@ -1146,7 +1150,7 @@ router.post('/api/interior/extract/retry', jsonParser, (req, res) => {
   spawnStepExtract({
     stepPath, outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
     progressMap: intExtractProgress, progressKey: name,
-    failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜座) 的整车 STEP',
+    failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜片面) 的整车 STEP',
     success: (result) => res.json({ ok: true, path: outPath, result }),
     failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
   });

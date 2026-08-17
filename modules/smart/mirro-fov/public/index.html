@@ -99,7 +99,7 @@
             <div class="verdict-col">
               <div class="verdict-col-head">
                 <span id="rw-badge" class="verdict-badge-md">--</span>
-                后挡风穿透 <small class="text-muted">参考·非硬</small>
+                后挡风穿透 <small class="text-muted">仅参考 · 非硬性指标</small>
               </div>
               <div id="verdict-rw-lines" class="verdict-lines"></div>
             </div>
@@ -133,7 +133,6 @@
             <div class="card-body py-2 px-2">
               <div class="mb-2"><label class="mb-0" style="font-size:13px">宽度 </label><small class="unit">mm</small><input id="width" type="number" step="any" class="form-control form-control-sm" title="反射面宽度 (水平方向)"></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">高度 </label><small class="unit">mm</small><input id="height" type="number" step="any" class="form-control form-control-sm" title="反射面高度 (垂直方向)"></div>
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">圆角R </label><small class="unit">mm</small><input id="corner-r" type="number" step="any" class="form-control form-control-sm" title="镜面四角圆角半径"></div>
             </div>
           </div>
         </div>
@@ -196,17 +195,6 @@
         </div>
       </div>
 
-      <!-- 后挡风 CAS 数据 (7 点) -->
-      <div id="rw-section-title" class="section-title">后挡风 CAS 轮廓 (7 点)</div>
-      <div class="row g-2 mb-2" id="rw-row">
-        <!-- rw-c0..rw-c6 动态由 JS 生成 -->
-      </div>
-
-      <!-- 透光区 (4 点) -->
-      <div id="tz-section-title" class="section-title">后挡风 透光区 (4 点)</div>
-      <div class="row g-2 mb-2" id="tz-row">
-        <!-- rw-t0..rw-t3 动态由 JS 生成 -->
-      </div>
       </div>
 
       <!-- 双视图上下排列: 各占全宽; 高度由内容真实比例 (aspect-ratio) 自适应, 填满无留白 -->
@@ -251,14 +239,15 @@
 
             <!-- 上传整车 STEP -->
             <div class="wizard-field">
-              <div class="d-flex justify-content-between align-items-center">
-                <label class="wizard-label mb-0">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
-                <button id="wiz-ext-copy-spec" type="button" class="btn btn-outline-accent btn-sm">复制供应商要求</button>
-              </div>
+              <label class="wizard-label">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
               <input id="wiz-ext-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
               <div class="wizard-actions">
                 <button id="wiz-ext-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
                 <span id="wiz-ext-result" class="wizard-result">选择文件后自动提取</span>
+              </div>
+              <div class="wizard-actions">
+                <button id="wiz-ext-copy-spec" type="button" class="btn btn-outline-accent btn-sm">复制供应商要求</button>
+                <span class="wizard-result">供应商按标注要求准备 STEP</span>
               </div>
             </div>
 
@@ -315,14 +304,15 @@
 
             <!-- 上传整车 STEP -->
             <div class="wizard-field">
-              <div class="d-flex justify-content-between align-items-center">
-                <label class="wizard-label mb-0">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
-                <button id="wiz-int-copy-spec" type="button" class="btn btn-outline-accent btn-sm">复制供应商要求</button>
-              </div>
+              <label class="wizard-label">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
               <input id="wiz-int-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
               <div class="wizard-actions">
                 <button id="wiz-int-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
                 <span id="wiz-int-result" class="wizard-result">选择文件后自动提取</span>
+              </div>
+              <div class="wizard-actions">
+                <button id="wiz-int-copy-spec" type="button" class="btn btn-outline-accent btn-sm">复制供应商要求</button>
+                <span class="wizard-result">供应商按标注要求准备 STEP</span>
               </div>
             </div>
 
@@ -422,34 +412,17 @@
 
       <div id="ext-params-collapse" style="display:none">
         <div class="row g-2 mb-2 param-row">
-        <!-- 镜片曲率 -->
-        <div class="col" style="min-width:130px">
+        <!-- 镜面 · 球心 -->
+        <div class="col" style="min-width:200px">
           <div class="card shadow-sm h-100">
-            <div class="card-header py-1 px-2"><div class="card-title mb-0">镜片曲率</div><small class="text-muted">凸球面 单球面</small></div>
+            <div class="card-header py-1 px-2"><div class="card-title mb-0">镜面 · 球心</div><small class="text-muted">凸球面 · 拟合</small></div>
             <div class="card-body py-2 px-2">
               <div class="mb-2"><label class="mb-0" style="font-size:13px">SR 校核 </label><small class="unit">m</small><input id="ext-sr-fit" type="number" step="any" class="form-control form-control-sm" readonly></div>
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">SR 设计 </label><small class="unit">m</small><input id="ext-sr-nominal" type="number" step="any" class="form-control form-control-sm" readonly></div>
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">公差 </label><small class="unit">m</small><input id="ext-sr-tol" type="number" step="any" class="form-control form-control-sm" readonly></div>
-              <div class="text-muted mt-2 pt-1 border-top" style="font-size:11px;text-align:center">拟合用 SR 校核值</div>
-            </div>
-          </div>
-        </div>
-        <!-- 球心(左) -->
-        <div class="col" style="min-width:130px">
-          <div class="card shadow-sm h-100">
-            <div class="card-header py-1 px-2"><div class="card-title mb-0">球心 (左)</div><small class="text-muted">供应商 · 交叉校核</small></div>
-            <div class="card-body py-2 px-2">
+              <div class="mb-1 mt-2 pt-1 border-top"><small class="text-muted">球心 左</small></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><small class="unit">m</small><input id="ext-c-L-x" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><small class="unit">m</small><input id="ext-c-L-y" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><small class="unit">m</small><input id="ext-c-L-z" type="number" step="any" class="form-control form-control-sm" readonly></div>
-            </div>
-          </div>
-        </div>
-        <!-- 球心(右) -->
-        <div class="col" style="min-width:130px">
-          <div class="card shadow-sm h-100">
-            <div class="card-header py-1 px-2"><div class="card-title mb-0">球心 (右)</div><small class="text-muted">供应商 · 交叉校核</small></div>
-            <div class="card-body py-2 px-2">
+              <div class="mb-1 mt-2 pt-1 border-top"><small class="text-muted">球心 右</small></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><small class="unit">m</small><input id="ext-c-R-x" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><small class="unit">m</small><input id="ext-c-R-y" type="number" step="any" class="form-control form-control-sm" readonly></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><small class="unit">m</small><input id="ext-c-R-z" type="number" step="any" class="form-control form-control-sm" readonly></div>
@@ -468,6 +441,10 @@
               <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="ext-axis-L-x" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 X 分量 (整车坐标)"></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="ext-axis-L-y" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 Y 分量"></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="ext-axis-L-z" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 Z 分量"></div>
+              <div class="mb-1 mt-2 pt-1 border-top"><small class="text-muted">折叠轴方向</small></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="ext-fold-L-x" type="number" step="any" class="form-control form-control-sm" readonly title="折叠轴方向向量 X 分量"></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="ext-fold-L-y" type="number" step="any" class="form-control form-control-sm" readonly title="折叠轴方向向量 Y 分量"></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="ext-fold-L-z" type="number" step="any" class="form-control form-control-sm" readonly title="折叠轴方向向量 Z 分量"></div>
               <div class="text-muted mt-2" style="font-size:10px" id="ext-axis-hint-L"></div>
             </div>
           </div>
@@ -484,6 +461,10 @@
               <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="ext-axis-R-x" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 X 分量 (整车坐标)"></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="ext-axis-R-y" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 Y 分量"></div>
               <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="ext-axis-R-z" type="number" step="any" class="form-control form-control-sm" title="旋转轴方向向量 Z 分量"></div>
+              <div class="mb-1 mt-2 pt-1 border-top"><small class="text-muted">折叠轴方向</small></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">X </label><input id="ext-fold-R-x" type="number" step="any" class="form-control form-control-sm" readonly title="折叠轴方向向量 X 分量"></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">Y </label><input id="ext-fold-R-y" type="number" step="any" class="form-control form-control-sm" readonly title="折叠轴方向向量 Y 分量"></div>
+              <div class="mb-2"><label class="mb-0" style="font-size:13px">Z </label><input id="ext-fold-R-z" type="number" step="any" class="form-control form-control-sm" readonly title="折叠轴方向向量 Z 分量"></div>
               <div class="text-muted mt-2" style="font-size:10px" id="ext-axis-hint-R"></div>
             </div>
           </div>
@@ -536,18 +517,6 @@
             </div>
           </div>
         </div>
-        <!-- 视野定区 -->
-        <div class="col" style="min-width:130px">
-          <div class="card shadow-sm h-100">
-            <div class="card-header py-1 px-2"><div class="card-title mb-0">视野定区</div><small class="text-muted">GB 15084 III 类</small></div>
-            <div class="card-body py-2 px-2">
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">近场宽 </label><small class="unit">m</small><input id="ext-w-near" type="number" step="any" class="form-control form-control-sm" readonly></div>
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">近场距 </label><small class="unit">m</small><input id="ext-d-near" type="number" step="any" class="form-control form-control-sm" readonly></div>
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">远场宽 </label><small class="unit">m</small><input id="ext-w-far" type="number" step="any" class="form-control form-control-sm" readonly></div>
-              <div class="mb-2"><label class="mb-0" style="font-size:13px">远场距 </label><small class="unit">m</small><input id="ext-d-far" type="number" step="any" class="form-control form-control-sm" readonly></div>
-            </div>
-          </div>
-        </div>
       </div>
       </div>
 
@@ -573,7 +542,7 @@
 
   </div>
 
-  <script src="app.js?v=20260817j"></script>
+  <script src="app.js?v=20260817q"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>
