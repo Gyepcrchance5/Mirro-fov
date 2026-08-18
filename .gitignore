@@ -1,6 +1,7 @@
 node_modules/
 *.png
 *.jpg
+*.zip
 *.html.tmp
 catia_read.yaml
 catia_read.json

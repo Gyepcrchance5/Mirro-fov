@@ -95,6 +95,8 @@ app.use('/mirro-fov', moduleAuth('mirro-fov'), mirroFovRoutes);
 | /api/interior/extract/progress | GET | 内镜提取进度轮询 |
 | /api/interior/extract/retry | POST | 内镜提取重试（不重传文件） |
 | /api/interior/save | POST | 内镜车型保存（原子写） |
+| /api/interior/upload-tmp | POST | 内镜多文件上传落盘（不提取） |
+| /api/interior/extract-multi | POST | 内镜多文件合并提取 |
 | /api/catia | POST | 3DE 读取（遗留，前端已隐藏） |
 | /api/catia/available | GET | 3DE 可用性检测 |
 
@@ -108,6 +110,8 @@ app.use('/mirro-fov', moduleAuth('mirro-fov'), mirroFovRoutes);
 | /api/exterior/extract | POST | 外镜整车 STEP 一键提取 |
 | /api/exterior/extract/progress | GET | 外镜提取进度轮询 |
 | /api/exterior/extract/retry | POST | 外镜提取重试（不重传文件） |
+| /api/exterior/upload-tmp | POST | 外镜多文件上传落盘（不提取） |
+| /api/exterior/extract-multi | POST | 外镜多文件合并提取 |
 | /api/exterior/save | POST | 外镜车型保存（原子写） |
 | /api/exterior/delete | POST | 外镜车型删除 |
 
