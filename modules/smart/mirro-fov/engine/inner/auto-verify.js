@@ -1,6 +1,6 @@
 /**
  * 自动搜角 — 等价于 Python auto_verify.py::search_passing_angles
- * 两阶段搜索: 种子区优先 → 全范围兜底; 返回完整 grid + pass_region。
+ * 两阶段搜索: 种子区优先 → 全范围兜底; 返回完整 grid + pass_region.
  */
 const { Mirror } = require('./mirror');
 const { computeVirtualEye, fiveLineVerification } = require('./five-line');
@@ -82,22 +82,21 @@ function searchPassingAngles({
 }) {
   const t0 = Date.now();
   const _range = (lo, hi, s) => {
-    if (s <= 0) s = 1;                    // 步长非法防御
-    if (hi < lo) { const t = lo; lo = hi; hi = t; }  // 倒序防御 (修 A14)
+    if (s <= 0) s = 1;
+    if (hi < lo) { const t = lo; lo = hi; hi = t; }
     const arr = [];
     const n = Math.round((hi - lo) / s) + 1;
     for (let i = 0; i < n; i++) arr.push(Math.round((lo + i * s) * 100) / 100);
     return arr;
   };
 
-  // 轻量五线校验 (搜角热循环用, 只算五线法 nHit, 不算反射法/虚像等参考判据)
   const fiveHit = (yawDeg, pitchDeg) => {
     const m = new Mirror({
       width: mirrorBase.width, height: mirrorBase.height,
       pivot: mirrorBase.pivot, armOffset: mirrorBase.armOffset,
       yaw: yawDeg * Math.PI / 180, pitch: pitchDeg * Math.PI / 180,
       cornerRadius: mirrorBase.cornerRadius || 0,
-    outlineLocal: mirrorBase.outlineLocal || null,
+      outlineLocal: mirrorBase.outlineLocal || null,
     });
     const eyeCx = eyePoints.center;
     const farPlaneX = eyeCx[0] + farDist;
@@ -113,37 +112,42 @@ function searchPassingAngles({
     return { nHit: r.nHit, mirrorPass: r.mirrorPass };
   };
 
-  // 阶段1: 种子区优先
+  const pitches = _range(pitchRange[0], pitchRange[1], step);
+  const allYaws = _range(yawRange[0], yawRange[1], step);
+  const grid = pitches.map(() => allYaws.map(() => -1));
+  const evaluated = new Set();
+  const key = (pi, yi) => `${pi}:${yi}`;
+  const findIndex = (pitch, yaw) => {
+    const pi = pitches.findIndex(v => v === pitch);
+    const yi = allYaws.findIndex(v => v === yaw);
+    return pi >= 0 && yi >= 0 ? [pi, yi] : null;
+  };
+
   const seedLo = Math.max(yawRange[0], seedYaw - seedHalf);
   const seedHi = Math.min(yawRange[1], seedYaw + seedHalf);
-  const pitches = _range(pitchRange[0], pitchRange[1], step);
   const seedYaws = _range(seedLo, seedHi, step);
+  let firstPass = null;
 
   for (const pitch of pitches) {
     for (const yaw of seedYaws) {
       const r = fiveHit(yaw, pitch);
-      if (r.mirrorPass) {
-        // 命中: 对 best 角度算一次完整 summary (含参考判据)
-        const s = computeAngleSummary({ mirrorBase, eyePoints, farDist, reqWidth, ground, rearWindow, yawDeg: yaw, pitchDeg: pitch, coverageYTol, groundZTol });
-        const gridYaws = _range(yawRange[0], yawRange[1], step);
-        const gridPitches = pitches;
-        const grid = gridPitches.map(() => gridYaws.map(() => -1));
-        const yi = gridYaws.reduce((bi, v, i, a) => Math.abs(v - yaw) < Math.abs(a[bi] - yaw) ? i : bi, 0);
-        const pi = gridPitches.reduce((bi, v, i, a) => Math.abs(v - pitch) < Math.abs(a[bi] - pitch) ? i : bi, 0);
+      const idx = findIndex(pitch, yaw);
+      if (idx) {
+        const [pi, yi] = idx;
         grid[pi][yi] = r.nHit;
-        return { found: true, bestYaw: yaw, bestPitch: pitch, summary: s, passRegion: { yawMin: yaw, yawMax: yaw, pitchMin: pitch, pitchMax: pitch }, grid, gridYaws, gridPitches, elapsed: (Date.now() - t0) / 1000 };
+        evaluated.add(key(pi, yi));
+      }
+      if (r.mirrorPass) {
+        firstPass = { yaw, pitch, nHit: r.nHit };
+        break;
       }
     }
+    if (firstPass) break;
   }
-
-  // 阶段2: 全范围兜底
-  const allYaws = _range(yawRange[0], yawRange[1], step);
-  const seedSet = new Set(seedYaws.map(y => Math.round(y * 1e6) / 1e6));
-  const grid = pitches.map(() => allYaws.map(() => -1));
-  let firstPass = null;
 
   for (let pi = 0; pi < pitches.length; pi++) {
     for (let yi = 0; yi < allYaws.length; yi++) {
+      if (evaluated.has(key(pi, yi))) continue;
       const yaw = allYaws[yi];
       const r = fiveHit(yaw, pitches[pi]);
       grid[pi][yi] = r.nHit;
@@ -154,12 +158,12 @@ function searchPassingAngles({
   const elapsed = (Date.now() - t0) / 1000;
 
   if (firstPass) {
-    // 命中: 对 best 角度算一次完整 summary
     const s = computeAngleSummary({ mirrorBase, eyePoints, farDist, reqWidth, ground, rearWindow, yawDeg: firstPass.yaw, pitchDeg: firstPass.pitch, coverageYTol, groundZTol });
     firstPass.summary = s;
     const pr = passRegion(grid, allYaws, pitches);
     return { found: true, bestYaw: firstPass.yaw, bestPitch: firstPass.pitch, summary: firstPass.summary, passRegion: pr, grid, gridYaws: allYaws, gridPitches: pitches, elapsed };
   }
+
   return { found: false, bestYaw: null, bestPitch: null, summary: null, passRegion: { yawMin: null, yawMax: null, pitchMin: null, pitchMax: null }, grid, gridYaws: allYaws, gridPitches: pitches, elapsed };
 }
 

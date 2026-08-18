@@ -21,7 +21,7 @@
   const PLOT_MARGIN_T = 20;   // 顶部留白
   const PLOT_AXIS_B = 54;     // x 轴标题 + 刻度高度
   const PLOT_LEGEND_H = 36;   // 底部横向图例一行高度
-  // 底部图例 y (paper 坐标, 负=plot 下方): 换算成固定像素偏移, 放在 x 轴标题下方 (轴标题 54px + 图例 36px = 90px 底边距)
+  // 底部图例 y (paper 坐标, 负=plot 下方): 换算成固定像素偏移, 放在 x 轴标题下方
   const bottomLegendY = plotAreaH => -(PLOT_AXIS_B / Math.max(80, plotAreaH));
 
   // ====== DOM refs ======
@@ -413,7 +413,9 @@
     const w = viewEl && viewEl.parentElement ? viewEl.parentElement.clientWidth - 20 : 600;
     const contentRatio = (hw * 2 + pad * 2) / (hh * 2 + pad * 2);
     const plotAreaH = w / contentRatio;
+    const totalH = Math.max(120, Math.round(plotAreaH) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H);
     const layout = {
+      height: totalH,
       xaxis: { title: 'lx (镜面右向, mm)', range: [-hw - pad, hw + pad],
                scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       yaxis: { title: 'ly (镜面上向, mm)', range: [-hh - pad, hh + pad],
@@ -426,7 +428,7 @@
       legend: { x: 0.5, y: bottomLegendY(plotAreaH), xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
     if (viewEl) {
-      viewEl.style.height = Math.max(120, Math.round(plotAreaH) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H) + 'px';
+      viewEl.style.height = totalH + 'px';
     }
     Plotly.react('mirror-view', traces, layout, { responsive: true });
   }
@@ -515,7 +517,9 @@
     const rwCw = rwEl && rwEl.parentElement ? rwEl.parentElement.clientWidth - 20 : 600;
     const ratio = (rwW + pad * 2) / (rwH + pad * 2);
     const plotAreaH = rwCw / ratio;
+    const totalH = Math.max(120, Math.round(plotAreaH) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H);
     const layout = {
+      height: totalH,
       xaxis: { title: 'u (玻璃宽向, mm)', range: [Math.min(...xs) - pad, Math.max(...xs) + pad],
                scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       yaxis: { title: 'v (玻璃上向, mm)', range: [Math.min(...ys) - pad, Math.max(...ys) + pad],
@@ -528,7 +532,7 @@
       legend: { x: 0.5, y: bottomLegendY(plotAreaH), xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
     if (rwEl) {
-      rwEl.style.height = Math.max(120, Math.round(plotAreaH) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H) + 'px';
+      rwEl.style.height = totalH + 'px';
     }
     Plotly.react('rear-window-view', traces, layout, { responsive: true });
     const rwCount = $('rw-count');
@@ -1867,10 +1871,12 @@
     const uMin = Math.min(...us), uMax = Math.max(...us), vMin = Math.min(...vs), vMax = Math.max(...vs);
     const pad = Math.max(uMax - uMin, vMax - vMin) * 0.25;
     // 外镜固定高度 520px (容器全宽, 1:1 等比例下动态高度会过大); 图例 y 按固定 plot 高度换算
-    const plotAreaH = 520 - PLOT_MARGIN_T - PLOT_AXIS_B - PLOT_LEGEND_H;
+    const totalH = 520;
+    const plotAreaH = totalH - PLOT_MARGIN_T - PLOT_AXIS_B - PLOT_LEGEND_H;
     const badge = { x: 0.99, xref: 'paper', y: 0.98, yref: 'paper', showarrow: false, font: { size: 20, color: 'white' },
       bgcolor: pass ? C.hit : C.miss, bordercolor: pass ? C.hit : C.miss, borderwidth: 2, borderpad: 6, align: 'center' };
     const layout = {
+      height: totalH,
       xaxis: { title: 'u (镜面右向, mm)', range: [uMin - pad, uMax + pad], scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       yaxis: { title: 'v (镜面上向, mm)', range: [vMin - pad, vMax + pad], gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       margin: { l: 50, r: 20, t: PLOT_MARGIN_T, b: PLOT_AXIS_B + PLOT_LEGEND_H }, paper_bgcolor: '#fff', plot_bgcolor: '#fff',

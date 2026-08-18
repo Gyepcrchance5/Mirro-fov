@@ -110,6 +110,8 @@ if (searchResult.found) {
   console.log(`耗时: ${searchResult.elapsed.toFixed(1)}s`);
   assert(searchResult.bestYaw === -24 && searchResult.bestPitch === 4, `搜角结果 yaw=-24° pitch=4° (得 ${searchResult.bestYaw}°/${searchResult.bestPitch}°)`);
   assert(searchResult.summary.nHit === 5, '搜角结果五线 5/5');
+  assert(searchResult.grid.every(row => row.every(v => v >= 0)), '种子区命中后仍返回完整热图 grid');
+  assert(searchResult.passRegion.yawMin !== null && searchResult.passRegion.pitchMin !== null, '种子区命中后仍返回完整 PASS 区域');
   // 关键回归: 旧 test.js 漏传 farDist 时假报 yaw=-28° 假 PASS, 此处必须排除
   assert(searchResult.bestYaw !== -28, '不退回假 PASS 角度 yaw=-28° (NaN 假 PASS 回归)');
 } else {
