@@ -469,7 +469,6 @@ def extract_interior(entities, points, step_name="step"):
         mirror = {
             'width': round(width_mm / 1000, 6) if width_mm is not None else None,
             'height': round(height_mm / 1000, 6) if height_mm is not None else None,
-            'corner_radius': 0.01,
             'pivot': pivot,
             'center_zero': center_zero,
             'arm_offset': [round(center_zero[i] - pivot[i], 6) for i in range(3)] if (center_zero and pivot) else None,
@@ -541,7 +540,7 @@ def extract_interior(entities, points, step_name="step"):
         },
         'vehicle': {'name': vehicle_name},
         'mirror': mirror if mirror else {
-            'width': None, 'height': None, 'corner_radius': 0.01,
+            'width': None, 'height': None,
             'pivot': pivot, 'center_zero': center_zero, 'arm_offset': None,
             'yaw': None, 'pitch': None, 'outline_local_mm': None, 'outline_path': None,
         },

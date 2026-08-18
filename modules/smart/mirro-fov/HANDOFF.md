@@ -188,7 +188,7 @@ node _test_server.js        # 等价 npm start
 {
   "vehicle": { "name": "车型A" },
   "mirror": {
-    "width": 0.225, "height": 0.051, "corner_radius": 0.010,
+    "width": 0.225, "height": 0.051,
     "pivot": [2.88, 0.0, 1.44],
     "center_zero": [2.91, 0, 1.44],
     "arm_offset": [0.026, 0, 0.001],

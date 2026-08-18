@@ -297,17 +297,11 @@ class CATIAExtractor:
             if w <= 0 or h <= 0:
                 print("  ⚠️ 镜面宽/高为 0, 校核将无效。建议重选 4 角或带 --config 预填。")
 
-        # 圆角半径 (4 角推不出, 始终手输, 默认 10mm)
-        cr = self._input_float(
-            "圆角半径 (mm, 无圆角填 0)",
-            default=cfg.get("mirror", {}).get("corner_radius", 0.01) * M_TO_MM
-        )
-
         # ─── 构建 config dict ────────────────────────────
 
         config = {}
 
-        # mirror
+        # mirror (圆角R 为人工取点遗留参数, STEP 时代镜面形状由轮廓定义, 不再采集)
         mirror = {}
         if "pivot" in points:
             mirror["pivot"] = points["pivot"]
@@ -315,7 +309,6 @@ class CATIAExtractor:
             mirror["center_zero"] = points["center_zero"]
         mirror["width"] = round(w * MM_TO_M, 6)
         mirror["height"] = round(h * MM_TO_M, 6)
-        mirror["corner_radius"] = round(cr * MM_TO_M, 6)
         mirror["yaw"] = yaw
         mirror["pitch"] = pitch
         config["mirror"] = mirror

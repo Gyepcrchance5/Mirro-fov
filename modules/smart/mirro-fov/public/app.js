@@ -136,7 +136,8 @@
   function readParams() {
     return {
       widthMM: pv(elWidth, 224.796), heightMM: pv(elHeight, 50.794),
-      cornerRadiusMM: 10.0,
+      // 圆角R 为人工取点遗留参数, STEP 时代镜面形状由轮廓定义, 固定 0 (仅回退圆角矩形时引擎才用)
+      cornerRadiusMM: 0,
       yawDeg: pv(elYaw, -23.5), pitchDeg: pv(elPitch, 5.0),
       pvMM: [pv(elPvX, 2883.07), pv(elPvY, 0), pv(elPvZ, 1441.017)],
       czMM: [pv(elCzX, 2909.215), pv(elCzY, 0.007), pv(elCzZ, 1441.88)],
@@ -276,14 +277,16 @@
     const m = data.mirror;
     const hw = m.widthMM / 2, hh = m.heightMM / 2;
     const r = m.cornerRadiusMM || 0;
-    const label = r > 0.01 ? `镜面 (R=${(r).toFixed(0)}mm)` : '镜面';
     // 留白 10mm; 图表高度由内容比例 + 容器宽度计算 —— 不能用 CSS aspect-ratio
     // (Plotly 渲染时 CSS 高度可能未解析 → 0 高度 → 图表不显示)
     const pad = 10;
 
     // 镜面轮廓: 优先用后端返回的真实轮廓 (STEP 采样), 否则前端退回圆角矩形
+    // 图例标签跟随实际绘制: 真实轮廓不标 R (圆角R 是人工取点遗留参数), 仅回退圆角矩形才显示
+    const hasOutline = !!(m.outline && m.outline.xs && m.outline.xs.length >= 3);
+    const label = hasOutline ? '镜面' : (r > 0.01 ? `镜面 (R=${(r).toFixed(0)}mm)` : '镜面');
     let ox, oy;
-    if (m.outline && m.outline.xs && m.outline.xs.length >= 3) {
+    if (hasOutline) {
       ox = m.outline.xs; oy = m.outline.ys;
     } else if (r < 0.01) {
       ox = [-hw, hw, hw, -hw, -hw]; oy = [-hh, -hh, hh, hh, -hh];
@@ -750,7 +753,7 @@
       const result = await callJson('/vehicles/save', {
         path: currentPath,
         name: $('vehicle-select').selectedOptions[0]?.textContent || '新车型',
-        widthMM: p.widthMM, heightMM: p.heightMM, cornerRadiusMM: p.cornerRadiusMM,
+        widthMM: p.widthMM, heightMM: p.heightMM,
         yawDeg: p.yawDeg, pitchDeg: p.pitchDeg,
         pvMM: p.pvMM, czMM: p.czMM,
         eyeMM: p.eyeMM, ipdMM: p.ipdMM,
@@ -781,7 +784,7 @@
       const p = readParams();
       const result = await callJson('/vehicles/save', {
         name, // 缺省 path → 后端 path.join(VEHICLES_DIR, `${safe}.json`)
-        widthMM: p.widthMM, heightMM: p.heightMM, cornerRadiusMM: p.cornerRadiusMM,
+        widthMM: p.widthMM, heightMM: p.heightMM,
         yawDeg: p.yawDeg, pitchDeg: p.pitchDeg,
         pvMM: p.pvMM, czMM: p.czMM,
         eyeMM: p.eyeMM, ipdMM: p.ipdMM,

@@ -433,7 +433,7 @@ Step 3: 点坐标 (3DE COM 或手输)
   - 方式二: 手动输入坐标表单
 
 Step 4: 标量参数
-  内镜: yaw / pitch / 圆角R / 瞳距
+  内镜: yaw / pitch / 瞳距
   外镜: SR标称 / SR公差 / 调节角度
 
 Step 5: 确认 & 保存
@@ -744,7 +744,6 @@ router.post('/api/step/upload', express.json({ limit: '100mb' }), async (req, re
         <div class="card shadow-sm h-100">
           <div class="card-header py-1 px-2"><div class="card-title mb-0">其他</div></div>
           <div class="card-body py-2 px-2">
-            <div class="mb-2"><label class="mb-0" style="font-size:13px">圆角R </label><small class="unit">mm</small><input id="wiz-corner" type="number" step="any" class="form-control form-control-sm" value="10"></div>
             <div class="mb-2"><label class="mb-0" style="font-size:13px">瞳距 </label><small class="unit">mm</small><input id="wiz-ipd" type="number" step="any" class="form-control form-control-sm" value="65"></div>
           </div>
         </div>

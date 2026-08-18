@@ -50,7 +50,7 @@
 ### ① 镜面几何面 — 必须提供 + 命名 `镜片`(平面无几何唯一性)
 - 镜片面命名 `镜片`(旧名 `INNER_MIRROR_GLASS`)(`ADVANCED_FACE`,平面)。**必须提供。**
 - 兜底:若未命名,系统在 pivot/center_zero 附近 200mm 找最大平面。
-- 提取:镜面轮廓 → width/height/corner_radius;镜面法向 → yaw/pitch。
+- 提取:镜面轮廓 → width/height;镜面法向 → yaw/pitch。
 - **供应商需保证**:镜片面是平面,且命名 `镜片`。
 
 ### ② 镜体结构 — 无(用命名点替代)

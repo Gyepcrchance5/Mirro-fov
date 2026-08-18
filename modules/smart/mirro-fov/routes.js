@@ -267,7 +267,7 @@ function fullVerify(params) {
     eyeCenter = [3.24309, -0.385, 1.372], ipd = 0.065,
     groundZ = 0.193209, ground = null,
     farDist = 60.0, reqWidth = 20.0,
-    yawDeg = -23.5, pitchDeg = 5.0, cornerRadius = 0.010,
+    yawDeg = -23.5, pitchDeg = 5.0, cornerRadius = 0,
     rearWindow = null, // { outline:[[x,y,z]...], transparentZone:[[...]...] }
     coverageYTol = 0.5, groundZTol = 1.0,
     outlineLocal = null, // 真实反射区轮廓 [[lx,ly] mm] (STEP 采样, 可选)
@@ -608,7 +608,7 @@ router.post('/api/vehicles/save', jsonParser, (req, res) => {
     existing.mirror.center_zero = body.czMM.map(v => v / 1000);
     existing.mirror.yaw = body.yawDeg;
     existing.mirror.pitch = body.pitchDeg;
-    existing.mirror.corner_radius = (body.cornerRadiusMM || 0) / 1000;
+    // corner_radius 为人工取点遗留参数, 不再写入 (镜面形状由 outline 定义)
 
     existing.driver.eye_center = body.eyeMM.map(v => v / 1000);
     existing.driver.interpupillary_distance = body.ipdMM / 1000;

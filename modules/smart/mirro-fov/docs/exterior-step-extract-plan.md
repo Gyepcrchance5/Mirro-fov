@@ -290,7 +290,7 @@ node _test_server.js &  # 手动上传 waijingjiaohe.stp 验证
 - `find_glass_face`: 
   - 优先命名面 `INNER_MIRROR_GLASS`; 兜底 `内后视镜镜座` 总成内最大平面
   - 追踪边界得轮廓 (复用 step_topology.trace_face_boundary / sample_edge_vertex_chained) → outline_local_mm (2D, 镜面局部 u-v) + 3D
-  - width/height/corner_radius 由轮廓跨度导出 (对齐现有 wizard 逻辑: floor of extents)
+  - width/height 由轮廓跨度导出 (对齐现有 wizard 逻辑: floor of extents)
 - `find_rear_window`: 命名面 `REAR_WINDOW`→外框轮廓; `REAR_WINDOW_TZ`→透光区
 - `derive_yaw_pitch`: 镜面法向 (glass plane normal) + pivot + center_zero → yaw/pitch (对照 modena -23.5/5 验证; 若镜片在 STEP 处零位则 yaw/pitch=0 且 center_zero=质心)
 - 输出 JSON 对齐 modena.json 结构 (mirror/driver/ground/rear_window/regulation/visualization), mm→m
