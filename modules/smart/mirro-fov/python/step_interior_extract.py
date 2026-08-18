@@ -572,21 +572,21 @@ def extract_interior(entities, points, step_name="step"):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="内镜数据一条龙提取")
-    parser.add_argument("step_file")
+    parser.add_argument("step_files", nargs='+', help="一个或多个 STEP 文件 (多文件自动合并)")
     parser.add_argument("--output", "-o", default=None, help="输出 JSON 路径")
     parser.add_argument("--name", default=None, help="车型名 (默认用文件名 stem)")
     args = parser.parse_args()
 
-    print(f"解析 STEP: {args.step_file}")
+    print(f"解析 STEP: {len(args.step_files)} 个文件")
     print("STEP_PROGRESS|解析 STEP 文件中...")
-    entities, points = scs.parse_step(args.step_file)
+    entities, points = scs.parse_and_merge(args.step_files)
     print(f"实体: {len(entities)}, 点: {len(points)}")
     print("STEP_PROGRESS|已解析实体, 提取内镜参数")
 
-    step_name = args.name or Path(args.step_file).stem
+    step_name = args.name or Path(args.step_files[0]).stem
     result = extract_interior(entities, points, step_name=step_name)
 
-    out_path = args.output or str(Path(args.step_file).with_suffix('.interior.json'))
+    out_path = args.output or str(Path(args.step_files[0]).with_suffix('.interior.json'))
     print("STEP_PROGRESS|写入输出文件...")
     with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)

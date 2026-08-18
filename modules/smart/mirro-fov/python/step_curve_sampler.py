@@ -98,6 +98,29 @@ def parse_step(path):
     return entities, points
 
 
+def parse_and_merge(paths):
+    """解析多个 STEP 文件并合并 (实体/点 ID 重编号), 供多文件上传凑齐参数。
+
+    文件顺序无关: 后解析文件的实体/点 ID 加偏移, 避免与已有 ID 冲突;
+    args 内的 #ref 引用同步重编号。合并后一次提取全部参数。
+    """
+    entities = {}
+    points = {}
+    for p in paths:
+        e, pts = parse_step(p)
+        if not e:
+            print(f"  ⚠️ 空文件或无 DATA: {p}", file=sys.stderr)
+            continue
+        offset = max(list(entities.keys()) + list(points.keys()), default=0) + 1
+        if offset > 1:
+            e = {eid + offset: (etype, re.sub(r'#(\d+)', lambda m: '#' + str(int(m.group(1)) + offset), args))
+                 for eid, (etype, args) in e.items()}
+            pts = {pid + offset: pt for pid, pt in pts.items()}
+        entities.update(e)
+        points.update(pts)
+    return entities, points
+
+
 def _parse_point_args(args):
     """CARTESIAN_POINT( '', #ref, (x,y,z) )  或  (x,y,z) 内联"""
     # 找最后一个 (a,b,c) 三元组

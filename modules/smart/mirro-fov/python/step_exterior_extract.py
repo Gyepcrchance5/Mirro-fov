@@ -445,8 +445,8 @@ def extract_exterior(entities, points, step_name="step", manual=None):
         sphere_center_m = [round(c/1000, 6) for c in s['center']]
         centroid_m = [round(float(np.mean(best, axis=0)[i])/1000, 6) for i in range(3)]
 
-        # SR 元数据 (STEP 无此几何, --json 模式沿用现有)
-        sr = {'sr_nominal': 1.23, 'sr_tolerance': 0.03}
+        # SR 元数据 (标称值图纸提供, 一般 1260±60; STEP 只含几何实测半径, --json 沿用现有标称)
+        sr = {'sr_nominal': 1.26, 'sr_tolerance': 0.06}
         if manual and f'exterior_mirror_{side}' in manual:
             mm = manual[f'exterior_mirror_{side}']
             sr['sr_nominal'] = mm.get('sr_nominal', sr['sr_nominal'])
@@ -474,11 +474,21 @@ def extract_exterior(entities, points, step_name="step", manual=None):
             axis['axis_y_point'] = mm.get('axis_y_point')
             axis['axis_z_point'] = mm.get('axis_z_point')
 
+        # SR 交叉验证: STEP 几何实测半径 vs 标称值 (偏差超公差 → 汇报, 不阻断)
+        sr_fit = round(s['radius'] / 1000, 6)
+        sr_dev = round(sr_fit - sr['sr_nominal'], 6)
+        sr_ok = abs(sr_dev) <= sr['sr_tolerance']
+        if not sr_ok:
+            print(f"  ⚠️ {side}: SR 交叉验证偏差 {sr_dev*1000:+.1f}mm 超公差 ±{sr['sr_tolerance']*1000:.0f}mm "
+                  f"(标称 {sr['sr_nominal']*1000:.0f} vs STEP 提取 {sr_fit*1000:.0f})")
+
         mirrors[side] = {
             'sr_nominal': sr['sr_nominal'],
             'sr_tolerance': sr['sr_tolerance'],
-            'sr_fit': round(s['radius']/1000, 6),
+            'sr_fit': sr_fit,
             'radius': round(s['radius']/1000, 6),
+            'sr_check': {'nominal': sr['sr_nominal'], 'tolerance': sr['sr_tolerance'],
+                         'fit': sr_fit, 'dev_mm': round(sr_dev*1000, 2), 'ok': sr_ok},
             'outline_raw': outline_m,
             'supplier_sphere_center': sphere_center_m,
             'turret_axis_p1': axis['turret_axis_p1'],
@@ -577,29 +587,6 @@ def extract_exterior(entities, points, step_name="step", manual=None):
     return result
 
 
-def parse_and_merge(paths):
-    """解析多个 STEP 文件并合并 (实体/点 ID 重编号), 供多文件上传凑齐参数。
-
-    文件顺序无关: 后解析文件的实体/点 ID 加偏移, 避免与已有 ID 冲突;
-    args 内的 #ref 引用同步重编号。合并后一次 extract_exterior 提取全部参数。
-    """
-    entities = {}
-    points = {}
-    for p in paths:
-        e, pts = scs.parse_step(p)
-        if not e:
-            print(f"  ⚠️ 空文件或无 DATA: {p}", file=sys.stderr)
-            continue
-        offset = max(list(entities.keys()) + list(points.keys()), default=0) + 1
-        if offset > 1:
-            e = {eid + offset: (etype, re.sub(r'#(\d+)', lambda m: '#' + str(int(m.group(1)) + offset), args))
-                 for eid, (etype, args) in e.items()}
-            pts = {pid + offset: pt for pid, pt in pts.items()}
-        entities.update(e)
-        points.update(pts)
-    return entities, points
-
-
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="外镜数据一条龙提取")
@@ -610,7 +597,7 @@ def main():
 
     print(f"解析 STEP: {len(args.step_files)} 个文件")
     print("STEP_PROGRESS|解析 STEP 文件中...")
-    entities, points = parse_and_merge(args.step_files)
+    entities, points = scs.parse_and_merge(args.step_files)
     print(f"实体: {len(entities)}, 点: {len(points)}")
     print(f"STEP_PROGRESS|已解析 {len(entities)} 实体, 提取镜面轮廓")
 

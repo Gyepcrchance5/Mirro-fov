@@ -52,10 +52,10 @@
   let currentRwOutline = null;   // 后挡风完整轮廓 [[x,y,z] m] (STEP 采样, 从车型加载)
 
   // 提取失败后重试所用的 sanitize 文件名 (STEP 已在盘, 重试不重传)
-  let extLastSafeName = null;    // 外镜校核页 (doExtUpload)
   let wizExtLastSafeName = null; // 外镜向导 (doWizExtUpload)
   let wizExtLastFiles = null;    // 外镜向导多文件模式: 已落盘 tmp 的文件名列表 (retry 用)
   let wizIntLastSafeName = null; // 内镜向导 (doWizIntUpload)
+  let wizIntLastFiles = null;    // 内镜向导多文件模式: 已落盘 tmp 的文件名列表 (retry 用)
 
   // ====== 通用 XHR 上传 (流式进度 + JSON 解析 + 友好错误) ======
   // fetch(body:file) 无上传进度; 改用 XMLHttpRequest:
@@ -842,85 +842,6 @@
     } finally { btn.disabled = false; btn.textContent = '从3DE读取'; }
   }
 
-  // 外镜 STEP 上传一键提取: 原始二进制上传 → 自动出车型 → 校核渲染 (无需 3DE)
-  async function doExtUpload() {
-    const input = $('ext-upload-input');
-    const file = input.files && input.files[0];
-    if (!file) return;
-    // 预检: 超过 500MB 前端直接拦截 (服务端 content-length/流式计数双保险)
-    if (file.size > 500 * 1024 * 1024) {
-      alert('文件 ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制, 请确认 STEP 文件');
-      return;
-    }
-    const btn = $('ext-upload-btn');
-    btn.disabled = true; btn.textContent = '提取中…'; $('ext-status').textContent = '';
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    extLastSafeName = safeName;
-    hideRetry('ext-status');
-    // 轮询提取进度 (文件名键与服务端 sanitize 一致)
-    const poll = setInterval(async () => {
-      try {
-        const r = await fetch('api/exterior/extract/progress?name=' + encodeURIComponent(safeName));
-        const d = await r.json();
-        if (d.progress) $('ext-status').textContent = d.progress;
-      } catch (e) { /* 轮询失败忽略, 主请求结果为准 */ }
-    }, 500);
-    try {
-      $('ext-status').textContent = `上传 0%, 提取外镜中...`;
-      const d = await uploadStep('api/exterior/extract', file, {
-        onProgress: (loaded, total) => {
-          if (total > 0) $('ext-status').textContent = `上传 ${(loaded / total * 100).toFixed(0)}%, 提取外镜中...`;
-        },
-      });
-      if (!d.ok) throw new Error(d.error);
-      await loadExtVehicles();
-      await loadExtConfig(d.path);
-      await doExtVerify();
-      $('ext-status').textContent = '提取完成: ' + String(d.path || '').split(/[\\/]/).pop();
-      hideRetry('ext-status');
-    } catch (e) {
-      $('ext-status').textContent = '上传提取失败: ' + e.message;
-      showRetry('ext-status', doExtRetry);
-    } finally {
-      clearInterval(poll);
-      btn.disabled = false; btn.textContent = '上传整车STEP';
-    }
-  }
-
-  // 重试提取: STEP 已在盘 (data/tmp), 不重传, 调 /api/exterior/extract/retry 重新 spawn
-  async function doExtRetry() {
-    const safeName = extLastSafeName || '';
-    if (!safeName) { alert('没有可重试的文件, 请重新上传'); return; }
-    const retryBtn = $('ext-status-retry');
-    if (retryBtn) retryBtn.disabled = true;
-    const poll = setInterval(async () => {
-      try {
-        const r = await fetch('api/exterior/extract/progress?name=' + encodeURIComponent(safeName));
-        const d = await r.json();
-        if (d.progress) $('ext-status').textContent = d.progress;
-      } catch (e) { /* 忽略 */ }
-    }, 500);
-    try {
-      $('ext-status').textContent = '重试提取中...';
-      const r = await fetch('api/exterior/extract/retry', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: safeName }),
-      });
-      const d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
-      if (!d.ok) throw new Error(d.error);
-      await loadExtVehicles();
-      await loadExtConfig(d.path);
-      await doExtVerify();
-      $('ext-status').textContent = '提取完成: ' + String(d.path || '').split(/[\\/]/).pop();
-      hideRetry('ext-status');
-    } catch (e) {
-      $('ext-status').textContent = '重试提取失败: ' + e.message;
-    } finally {
-      clearInterval(poll);
-      if (retryBtn) retryBtn.disabled = false;
-    }
-  }
-
   // ====== 共享 DOM 初始化 (内镜页: 按钮事件绑定) ======
   // 提取为共享函数, initInner 和内镜保存后跳转两处调用 (消除 30 行复制)
   function initInnerDOM() {
@@ -971,10 +892,8 @@
       await loadExtConfig(e.target.value);
       await doExtVerify();
     });
-    // 顶栏操作 (外镜 3DE 读取 / STEP 上传一键提取 — 按钮已隐藏, 函数保留)
+    // 顶栏操作 (外镜 3DE 读取 — 按钮已隐藏, 函数保留)
     $('ext-catia-btn').addEventListener('click', doExtCatia);
-    $('ext-upload-btn').addEventListener('click', () => $('ext-upload-input').click());
-    $('ext-upload-input').addEventListener('change', doExtUpload);
     checkCatiaAvailability().then(ok => { if (!ok) { $('ext-catia-btn').disabled = true; $('ext-catia-btn').title = '平台环境不支持 3DE 读取, 请本地使用'; $('ext-catia-btn').textContent = '3DE不可用'; } });
     $('ext-save-btn').addEventListener('click', doExtSave);
     $('ext-save-as-btn').addEventListener('click', doExtSaveAs);
@@ -1165,12 +1084,13 @@
     const rows = [];
     const add = (label, value, good) => rows.push(`<tr><td class="st-k">${label}</td><td class="st-v">${value}</td><td class="st-s">${good ? ok : warn}</td></tr>`);
     const fmt3 = v => (Array.isArray(v) && v.length >= 3) ? '[' + v.map(x => Number.isFinite(x) ? x.toFixed(3) : '-').join(', ') + ']' : 'null';
-    // 镜体坐标系 = 原点(旋转中心) + 旋转轴(Y, 系统算) + 折叠轴(Z)
+    const fmt3mm = v => (Array.isArray(v) && v.length >= 3) ? '[' + v.map(x => Number.isFinite(x) ? (x * 1000).toFixed(0) : '-').join(', ') + ']' : 'null';
+    // 镜体坐标系 = 原点(旋转中心, mm) + 旋转轴(Y, 系统算) + 折叠轴(Z)
     const frameTxt = (m) => {
       if (!m || !Array.isArray(m.turret_axis_p1)) return 'null';
       const rot = Array.isArray(m.rotation_axis_dir) ? fmt3(m.rotation_axis_dir) : 'null';
       const fold = Array.isArray(m.fold_axis_dir) ? fmt3(m.fold_axis_dir) : 'null';
-      return `原点 ${fmt3(m.turret_axis_p1)} · 旋转轴 ${rot} · 折叠轴 ${fold}`;
+      return `原点 ${fmt3mm(m.turret_axis_p1)} · 旋转轴 ${rot} · 折叠轴 ${fold}`;
     };
 
     const L = (cfg.mirrors && cfg.mirrors.left) || {};
@@ -1179,16 +1099,24 @@
     const g = cfg.ground || {};
     const dp = cfg.door_panel || {};
 
-    add('SR 校核', L.sr_fit != null ? L.sr_fit.toFixed(3) + ' m' : 'null', L.sr_fit != null);
-    add('球心 (左)', fmt3(L.sphere_center), Array.isArray(L.sphere_center));
-    add('球心 (右)', fmt3(R.sphere_center), Array.isArray(R.sphere_center));
+    add('SR 校核', L.sr_fit != null ? (L.sr_fit * 1000).toFixed(0) + ' mm' : 'null', L.sr_fit != null);
+    // SR 交叉验证 (提取时几何实测半径 vs 标称值, 偏差超公差汇报不阻断)
+    if (L.sr_check || R.sr_check) {
+      const srTxt = (m) => m.sr_check
+        ? `标称 ${(m.sr_check.nominal * 1000).toFixed(0)}±${(m.sr_check.tolerance * 1000).toFixed(0)} · 偏差 ${(m.sr_check.dev_mm >= 0 ? '+' : '') + m.sr_check.dev_mm.toFixed(0)}mm`
+        : '-';
+      const srAllOk = (L.sr_check ? L.sr_check.ok : true) && (R.sr_check ? R.sr_check.ok : true);
+      add('SR 交叉验证', `${srTxt(L)} / ${srTxt(R)}`, srAllOk);
+    }
+    add('球心 (左)', fmt3mm(L.sphere_center), Array.isArray(L.sphere_center));
+    add('球心 (右)', fmt3mm(R.sphere_center), Array.isArray(R.sphere_center));
     add('镜体坐标系 (左)', frameTxt(L), Array.isArray(L.rotation_axis_dir));
     add('镜体坐标系 (右)', frameTxt(R), Array.isArray(R.rotation_axis_dir));
     const eye = drv.eye_left_raw != null
-      ? `${fmt3(drv.eye_left_raw)} · IPD ${drv.interpupillary_distance != null ? (drv.interpupillary_distance * 1000).toFixed(1) + 'mm' : 'null'}` : 'null';
+      ? `${fmt3mm(drv.eye_left_raw)} · IPD ${drv.interpupillary_distance != null ? (drv.interpupillary_distance * 1000).toFixed(1) + 'mm' : 'null'}` : 'null';
     add('眼点', eye, drv.eye_left_raw != null);
-    add('地面', `前 ${fmt3(g.front_mid)} · 后 ${fmt3(g.rear_mid)}`, g.front_mid != null);
-    add('车门 Y', `左 ${dp.door_outer_Y_left} · 右 ${dp.door_outer_Y_right}`, dp.door_outer_Y_left != null);
+    add('参考地平线', `前 ${fmt3mm(g.front_mid)} · 后 ${fmt3mm(g.rear_mid)}`, g.front_mid != null);
+    add('车门 Y', `左 ${dp.door_outer_Y_left != null ? (dp.door_outer_Y_left * 1000).toFixed(1) : '-'} · 右 ${dp.door_outer_Y_right != null ? (dp.door_outer_Y_right * 1000).toFixed(1) : '-'}`, dp.door_outer_Y_left != null);
 
     return `<table class="extract-summary-table"><tbody>${rows.join('')}</tbody></table>`;
   }
@@ -1240,14 +1168,14 @@
 请在 STEP 文件内，对以下几何实体命名标注（赋实体名）：
 
 【点的标注】CARTESIAN_POINT
-· 球铰 —— 镜片球铰中心点
-· 镜心 —— 镜面 yaw=pitch=0 时的中心点
+· 球铰 —— 镜片球铰中心点（旋转中心）
+· 镜心 —— 镜面 yaw=pitch=0（处于原始位置）时的几何中心点
 · 眼点左 / 眼点右 —— 驾驶员左右眼点
-· 地面前 / 地面后 —— 地面前后参考点
+· 地面前 / 地面后 —— 参考地平线前端中点 / 后端中点
 
 【面的标注】ADVANCED_FACE
-· 镜片 —— 镜片面
-· 后挡风 —— 后挡风外框面`;
+· 镜片 —— 镜片反射 CAS 面
+· 后挡风 —— 后挡风外框 CAS 面`;
 
   const EXTERIOR_SPEC_TEXT = `【外后视镜 STEP 标注要求】
 坐标系：整车坐标系（X+后方、Y+乘客右、Z+上方，单位 mm）
@@ -1255,15 +1183,18 @@
 请在 STEP 文件内，对以下几何实体命名标注（赋实体名）：
 
 【面的标注】ADVANCED_FACE
-· 镜片左 / 镜片右 —— 左右凸球面镜片面
+· 镜片左 / 镜片右 —— 左右凸球面镜片 CAS 面
 
 【坐标系的标注】AXIS2_PLACEMENT_3D
-· 左镜体坐标系 / 右镜体坐标系 —— 镜体坐标系（原点=旋转中心 p1，Z轴=折叠轴，X轴=镜面右向）
+· 左镜体坐标系 / 右镜体坐标系 —— 镜体坐标系（原点=旋转中心 p1，Z轴=折叠轴，X轴=镜面右向，Y轴=旋转轴）
 
 【点的标注】CARTESIAN_POINT
 · 眼点左 / 眼点右 —— 驾驶员左右眼点
-· 地面前 / 地面后 —— 地面前后参考点
-· 车门左 / 车门右 —— 车门蒙皮主面最外点`;
+· 地面前 / 地面后 —— 参考地平线前端中点 / 后端中点
+· 车门左 / 车门右 —— 车门蒙皮主面最外点
+
+【参数】球面半径 SR
+· SR 设计标称值 + 公差（如 1260 ± 60 mm）—— 供应商图纸提供，系统与 STEP 提取的球面半径交叉验证`;
 
   async function copySupplierSpec(text, btn) {
     try {
@@ -1324,7 +1255,7 @@
 
     const ground = (g.front_mid != null && g.rear_mid != null)
       ? `前 ${fmtWizIntVec(g.front_mid)} · 后 ${fmtWizIntVec(g.rear_mid)}` : 'null';
-    add('地面', ground, g.front_mid != null && g.rear_mid != null);
+    add('参考地平线', ground, g.front_mid != null && g.rear_mid != null);
 
     const rwOk = !!(rw.outline && rw.outline.length);
     add('后挡风', rwOk ? `${rw.outline.length} 点` : '未命名 (可空)', rwOk);
@@ -1337,45 +1268,52 @@
   // Step 1: 上传整车 STEP → 提取到 tmp → 预览镜面轮廓 2D + 参数摘要
   async function doWizIntUpload() {
     const input = $('wiz-int-step');
-    const file = input.files && input.files[0];
-    if (!file) { $('wiz-int-result').className = 'wizard-result'; $('wiz-int-result').textContent = '请先选择文件'; return; }
+    const files = input.files ? Array.from(input.files) : [];
+    const resultDiv = $('wiz-int-result');
+    if (!files.length) { resultDiv.className = 'wizard-result'; resultDiv.textContent = '请先选择文件'; return; }
     // 预检: 超过 500MB 前端直接拦截
-    if (file.size > 500 * 1024 * 1024) {
-      alert('文件 ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制, 请确认 STEP 文件');
-      return;
+    for (const file of files) {
+      if (file.size > 500 * 1024 * 1024) {
+        alert('文件 ' + file.name + ' ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制');
+        return;
+      }
     }
     const btn = $('wiz-int-upload-btn');
     btn.disabled = true; btn.textContent = '提取中…';
-    const resultDiv = $('wiz-int-result');
     resultDiv.className = 'wizard-result';
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    wizIntLastSafeName = safeName;
     hideRetry('wiz-int-result');
-    const poll = setInterval(async () => {
-      try {
-        const r = await fetch('api/interior/extract/progress?name=' + encodeURIComponent(safeName));
-        const d = await r.json();
-        if (d.progress) resultDiv.textContent = d.progress;
-      } catch (e) { /* 轮询失败忽略 */ }
-    }, 500);
+    wizIntLastFiles = null;
+    wizIntLastSafeName = files[0].name.replace(/[^a-zA-Z0-9._-]/g, '_');
     try {
-      resultDiv.textContent = `上传 0%, 提取内镜中...`;
-      const d = await uploadStep('api/interior/extract', file, {
-        onProgress: (loaded, total) => {
-          if (total > 0) resultDiv.textContent = `上传 ${(loaded / total * 100).toFixed(0)}%, 提取内镜中...`;
-        },
-      });
-      if (!d.ok) throw new Error(d.error);
-      wizIntHandleResult(d);
+      // 1. 逐文件上传到 tmp (仅落盘, 不提取)
+      const names = [];
+      for (let i = 0; i < files.length; i++) {
+        resultDiv.textContent = `上传 ${i + 1}/${files.length}: ${files[i].name}`;
+        const d = await uploadStep('api/interior/upload-tmp', files[i], {
+          onProgress: (loaded, total) => {
+            if (total > 0) resultDiv.textContent = `上传 ${i + 1}/${files.length} ${(loaded / total * 100).toFixed(0)}%`;
+          },
+        });
+        if (!d.ok) throw new Error(d.error);
+        names.push(d.filename);
+      }
+      wizIntLastFiles = names;
+      // 2. 合并提取
+      resultDiv.textContent = '合并提取中...';
+      const d2 = await fetch('api/interior/extract-multi', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: names }),
+      }).then(r => r.json());
+      if (!d2.ok) throw new Error(d2.error);
+      wizIntHandleResult(d2);
       resultDiv.className = 'wizard-result ok';
-      resultDiv.textContent = '提取完成';
+      resultDiv.textContent = `提取完成 (${files.length} 文件合并)`;
       hideRetry('wiz-int-result');
     } catch (e) {
       resultDiv.className = 'wizard-result err';
       resultDiv.textContent = '提取失败: ' + e.message;
       showRetry('wiz-int-result', doWizIntRetry);
     } finally {
-      clearInterval(poll);
       btn.disabled = false; btn.textContent = '上传并提取';
     }
   }
@@ -1393,23 +1331,26 @@
     const resultDiv = $('wiz-int-result');
     const retryBtn = $('wiz-int-result-retry');
     if (retryBtn) retryBtn.disabled = true;
-    const safeName = wizIntLastSafeName || '';
-    if (!safeName) { alert('没有可重试的文件, 请重新上传'); return; }
-    const poll = setInterval(async () => {
-      try {
-        const r = await fetch('api/interior/extract/progress?name=' + encodeURIComponent(safeName));
-        const d = await r.json();
-        if (d.progress) resultDiv.textContent = d.progress;
-      } catch (e) { /* 忽略 */ }
-    }, 500);
     try {
       resultDiv.className = 'wizard-result';
-      resultDiv.textContent = '重试提取中...';
-      const r = await fetch('api/interior/extract/retry', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: safeName }),
-      });
-      const d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      let d;
+      if (wizIntLastFiles && wizIntLastFiles.length) {
+        resultDiv.textContent = '合并提取中...';
+        const r = await fetch('api/interior/extract-multi', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: wizIntLastFiles }),
+        });
+        d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      } else {
+        const safeName = wizIntLastSafeName || '';
+        if (!safeName) { alert('没有可重试的文件, 请重新上传'); return; }
+        resultDiv.textContent = '重试提取中...';
+        const r = await fetch('api/interior/extract/retry', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: safeName }),
+        });
+        d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      }
       if (!d.ok) throw new Error(d.error);
       wizIntHandleResult(d);
       resultDiv.className = 'wizard-result ok';
@@ -1419,7 +1360,6 @@
       resultDiv.className = 'wizard-result err';
       resultDiv.textContent = '重试提取失败: ' + e.message;
     } finally {
-      clearInterval(poll);
       if (retryBtn) retryBtn.disabled = false;
     }
   }
@@ -1575,24 +1515,26 @@
       extRawConfig = d.raw || null;
       const set = (id, v) => { const el = $(id); if (el) el.value = v; };
       const L = d.mirrors.left, R = d.mirrors.right;
-      set('ext-sr-fit', L.sr_fit);
+      // 单位统一 mm: 坐标/标量 m→mm 显示; 方向向量 (旋转轴/折叠轴) 无量纲不转换
+      const mm = v => (v == null ? v : +(v * 1000).toFixed(3));
+      set('ext-sr-fit', mm(L.sr_fit));
       set('ext-profile-tol', L.profile_tol_mm ?? 0.3);
       ['x', 'y', 'z'].forEach((ax, i) => {
-        set('ext-c-L-' + ax, L.sphere_center[i]); set('ext-c-R-' + ax, R.sphere_center[i]);
-        set('ext-p1-L-' + ax, L.turret_axis_p1[i]); set('ext-p1-R-' + ax, R.turret_axis_p1[i]);
+        set('ext-c-L-' + ax, mm(L.sphere_center[i])); set('ext-c-R-' + ax, mm(R.sphere_center[i]));
+        set('ext-p1-L-' + ax, mm(L.turret_axis_p1[i])); set('ext-p1-R-' + ax, mm(R.turret_axis_p1[i]));
         set('ext-axis-L-' + ax, L.rotation_axis_dir[i]); set('ext-axis-R-' + ax, R.rotation_axis_dir[i]);
         set('ext-fold-L-' + ax, L.fold_axis_dir ? L.fold_axis_dir[i] : '');
         set('ext-fold-R-' + ax, R.fold_axis_dir ? R.fold_axis_dir[i] : '');
       });
       setExtAxisHint('L', L.rotation_axis_dir); setExtAxisHint('R', R.rotation_axis_dir);
       ['x', 'y', 'z'].forEach((ax, i) => {
-        set('ext-eye-L-' + ax, d.driver.eye_left_raw[i]);
-        set('ext-eye-R-' + ax, d.driver.eye_right_raw[i]);
+        set('ext-eye-L-' + ax, mm(d.driver.eye_left_raw[i]));
+        set('ext-eye-R-' + ax, mm(d.driver.eye_right_raw[i]));
       });
-      set('ext-ipd', d.driver.interpupillary_distance);
-      set('ext-door-L', d.door_panel.door_outer_Y_left); set('ext-door-R', d.door_panel.door_outer_Y_right);
-      set('ext-gf', d.ground.front_mid.map(v => v.toFixed(4)).join(', '));
-      set('ext-gr', d.ground.rear_mid.map(v => v.toFixed(4)).join(', '));
+      set('ext-ipd', mm(d.driver.interpupillary_distance));
+      set('ext-door-L', mm(d.door_panel.door_outer_Y_left)); set('ext-door-R', mm(d.door_panel.door_outer_Y_right));
+      set('ext-gf', d.ground.front_mid.map(v => mm(v).toFixed(1)).join(', '));
+      set('ext-gr', d.ground.rear_mid.map(v => mm(v).toFixed(1)).join(', '));
       $('ext-badge-left').textContent = '左 --'; $('ext-badge-left').className = 'verdict-badge-md';
       $('ext-badge-right').textContent = '右 --'; $('ext-badge-right').className = 'verdict-badge-md';
       $('ext-verdict-detail').textContent = '点击校核';
@@ -1604,7 +1546,7 @@
       if (esum) {
         const cL = L.sphere_center || [];
         const ipdMm = d.driver.interpupillary_distance != null ? (d.driver.interpupillary_distance * 1000).toFixed(1) : '-';
-        esum.textContent = `SR=${L.sr_fit != null ? L.sr_fit.toFixed(3) + 'm' : '-'} · 球心=[${cL.map(v => v.toFixed(3)).join(', ')}] · 眼距=${ipdMm}mm`;
+        esum.textContent = `SR=${L.sr_fit != null ? (L.sr_fit * 1000).toFixed(0) + 'mm' : '-'} · 球心=[${cL.map(v => (v * 1000).toFixed(0)).join(', ')}] · 眼距=${ipdMm}mm`;
       }
       // 缺左右调节轴 (fold_axis_dir) 时提示: θ 不生效
       const hasFold = L.fold_axis_dir || R.fold_axis_dir;

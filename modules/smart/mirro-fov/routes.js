@@ -748,6 +748,7 @@ router.get('/api/exterior/config', (req, res) => {
     const raw = loadExteriorVehicle(p || undefined);
     const sum = (m) => ({
       sr_fit: m.sr_fit, sr_nominal: m.sr_nominal, sr_tolerance: m.sr_tolerance, radius: m.radius,
+      sr_check: m.sr_check || null,
       profile_tol_mm: m.profile_tol_mm ?? 0.3,
       sphere_center: m.supplier_sphere_center, outline_n: m.outline_raw.length,
       turret_axis_p1: m.turret_axis_p1, rotation_axis_dir: m.rotation_axis_dir,
@@ -1148,6 +1149,42 @@ router.post('/api/interior/extract', (req, res) => {
   };
 
   streamStepToTmp(req, filename, onDone, (status, msg) => res.status(status).json({ ok: false, error: msg }));
+});
+
+// ---- 内后视镜: 多文件上传 (同一车型多个 STEP 合并提取) ----
+// 第一步: 上传单个文件到 tmp (仅落盘, 不提取), 返回文件名
+router.post('/api/interior/upload-tmp', (req, res) => {
+  const filename = decodeURIComponent(req.get('x-filename') || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
+  streamStepToTmp(req, filename, (stepPath) => {
+    res.json({ ok: true, filename, path: stepPath });
+  }, (status, msg) => res.status(status).json({ ok: false, error: msg }));
+});
+
+// 第二步: 合并提取 — 接收已落盘 tmp 的文件名列表, 一次性合并提取全部参数
+router.post('/api/interior/extract-multi', jsonParser, (req, res) => {
+  const files = (req.body && req.body.files) || [];
+  if (!Array.isArray(files) || files.length === 0) {
+    return res.status(400).json({ ok: false, error: '缺少 files 列表' });
+  }
+  const stepPaths = [];
+  for (const f of files) {
+    const name = String(f).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const p = path.join(STEP_TMP_DIR, name);
+    if (!path.resolve(p).startsWith(path.resolve(STEP_TMP_DIR)) || !fs.existsSync(p)) {
+      return res.status(400).json({ ok: false, error: '临时文件不存在或越界: ' + name });
+    }
+    stepPaths.push(p);
+  }
+  const stem = path.basename(stepPaths[0], path.extname(stepPaths[0]));
+  const outPath = path.join(STEP_TMP_DIR, stem + '.json');
+  try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
+  spawnStepExtract({
+    stepPaths, outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
+    progressMap: intExtractProgress, progressKey: files.join('+'),
+    failMsg: '内镜多文件提取失败, 请确认文件含内镜 (命名点/镜片面) 与参数',
+    success: (result) => res.json({ ok: true, path: outPath, result }),
+    failure: (msg) => res.status(400).json({ ok: false, error: msg }),
+  });
 });
 
 // ---- 重试提取: STEP 已在盘 (data/tmp), 不重传, 直接重新 spawn ----
