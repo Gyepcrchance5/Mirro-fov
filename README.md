@@ -6,7 +6,7 @@
 
 ### 内后视镜（I 类 · 平面镜）
 
-- **整车 STEP 自动提取** — 上传一个整车 STEP, 自动提取镜面轮廓/球铰/镜心/眼点/地面/后挡风 + yaw/pitch
+- **整车 STEP 自动提取** — 上传一个整车 STEP（可多选，多文件自动合并）, 自动提取镜面轮廓/球铰/镜心/眼点/地面/后挡风 + yaw/pitch
 - **五线法主判据** — 5 条射线全命中反射面 → PASS
 - **镜中法规线倒影** — 60m 处 ±10m 地平线在镜面上的投影曲线
 - **后挡风穿透** — 参考判据（仅报告不判定）
@@ -15,7 +15,9 @@
 
 ### 外后视镜（III 类 · 凸球面镜）
 
-- **整车 STEP 自动提取** — 上传一个整车 STEP, 自动提取球面/轮廓/球心/R + 旋转轴 (AXIS2_PLACEMENT_3D) + 6 命名点
+- **整车 STEP 自动提取** — 上传一个整车 STEP（可多选，多文件自动合并）, 自动提取球面/轮廓/球心/R + 镜体坐标系 (AXIS2_PLACEMENT_3D) + 6 命名点
+- **镜片轮廓度** — 加工误差对称 ±mm，距边 < 轮廓度判「可能超出加工边界」，视图加工边界带
+- **SR 交叉验证** — 提取时几何实测半径 vs 标称值（一般 1260±60），偏差超公差汇报、人工判断
 - **球面轮廓拟合** — 共面/非共面双路径自动检测 + 供应商球心交叉校核
 - **精确球面反射** — 二次方程闭式解 + 全球面扫描求根
 - **双眼交集判据** — GB 15084 双眼反射点都在镜面内 + 安全距离 ≥3mm
@@ -27,7 +29,7 @@
 
 | 层 | 技术 | 说明 |
 |---|---|---|
-| 计算引擎 | 纯 JavaScript | 零外部依赖，166 断言全绿 |
+| 计算引擎 | 纯 JavaScript | 零外部依赖，170 断言全绿 |
 | Web 服务 | Express.js | REST API + 静态文件托管 |
 | 前端 | Bootstrap 5 + Plotly.js | Apple 冷白设计系统 |
 | STEP 提取 | Python + numpy | 一个整车 STEP 全自动提取参数 |
@@ -92,7 +94,7 @@ npm start
 
 ```bash
 npm test
-# 166 断言 (内镜 49 + 外镜 66 + 球面拟合 51)
+# 170 断言 (内镜 51 + 外镜 68 + 球面拟合 51)
 ```
 
 ## 📊 校核判据
@@ -125,7 +127,7 @@ npm test
 | `step_exterior_extract.py` | 外镜:球面/轮廓/球心/R 几何识别 + 旋转轴 AXIS2_PLACEMENT_3D + 6 命名点 |
 | `step_interior_extract.py` | 内镜:镜片面/后挡风命名识别 + 球铰/镜心命名点 + yaw/pitch SVD 推导 |
 
-供应商需按 [docs/supplier-step-annotation-spec.md](modules/smart/mirro-fov/docs/supplier-step-annotation-spec.md) 在 STEP 里标注点/面命名,即可全自动提取。命名缺失时退化为坐标启发式(仅适用本车型)。
+供应商需按标注要求（[外镜](modules/smart/mirro-fov/docs/exterior-step-supplier-spec.md) / [内镜](modules/smart/mirro-fov/docs/interior-step-supplier-spec.md)）在 STEP 里标注点/面/坐标系命名,即可全自动提取。命名缺失时退化为坐标启发式(仅适用本车型)。
 
 > **3DE 选点**（`python -m mirror_fov.catia_extract`）为遗留方案,已从前端隐藏,STEP 自动提取是主要方式。
 

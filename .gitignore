@@ -14,11 +14,7 @@ modules/smart/mirro-fov/data/vehicles/*.outline.json
 modules/smart/mirro-fov/data/exterior/*.json
 !modules/smart/mirro-fov/data/exterior/*.example.json
 
-# 敏感文档 (内部开发文档/含真实坐标/车型代号/供应商数据/平台细节, 不入库)
-modules/smart/mirro-fov/HANDOFF.md
-modules/smart/mirro-fov/docs/DEVELOPMENT_SPEC.md
-modules/smart/mirro-fov/docs/exterior-mirror-inputs.md
-# 平台落地页 (含内部组织名/部署说明)
+# 平台落地页 (含内部组织名/部署说明, 不入库)
 modules/smart/public/index.html
 # 临时 STEP 上传/提取产物 (任意层级)
 **/data/tmp/

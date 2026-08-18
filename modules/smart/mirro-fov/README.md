@@ -153,7 +153,7 @@ mirro-fov/
 cd modules/smart/mirro-fov
 npm install
 pip install -r python/requirements.txt   # numpy 等 (STEP 提取必需)
-npm test             # 166 断言全绿
+npm test             # 170 断言全绿
 python python/test_step_extraction.py   # STEP 提取回归 (6 项)
 npm start            # → http://localhost:3000
 ```

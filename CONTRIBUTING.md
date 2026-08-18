@@ -25,7 +25,7 @@
 
 - 一次提交只做一件事（单一职责）
 - 每次提交写清楚改了什么（中文描述，body 可选详述）
-- 提交前跑 `npm test`（**166 断言**全绿：内镜 49 + 外镜 66 + 球面拟合 51）
+- 提交前跑 `npm test`（**170 断言**全绿：内镜 51 + 外镜 68 + 球面拟合 51）
 - 改 `index.html` / `app.js` / `style.css` 时，递增 `?v=` 缓存版本号
 - 代码改动提交前需经确认（不自动提交）；确认后套用本规范提交
 
@@ -69,15 +69,15 @@
 
 ### 3.4 当前基线
 
-**v2.0.0** — 内外镜全自动 STEP 提取工作流
+**v2.4.0** — 内外镜全线对齐 + 多文件上传 + SR 交叉验证（最新基线以 CHANGELOG 顶部为准）
 
 ## 4. 验收规范
 
 每个功能/修复完成后，独立核验（不是只看执行结果，要实际跑）：
 
-- **引擎改动**：`npm test` 166 断言全绿
+- **引擎改动**：`npm test` 170 断言全绿
 - **提取脚本改动**：与人工/参考数据对照（如球心/眼点/轴线逐项差 < 阈值）
-- **前端改动**：`node -c public/app.js` 语法 + 浏览器验证功能点（校核/上传/折叠/预览）
+- **前端改动**：`node --check public/app.js` 语法 + 浏览器验证功能点（校核/上传/折叠/预览）
 - **新增接口**：越界/默认保护/错误处理的安全测试
 
 ## 5. 文档维护规范
@@ -96,13 +96,13 @@
 - 前端代码（`public/`）
 - 后端路由（`routes.js`）
 - 模板数据（`*.example.json`）
-- 开发框架文档（README / CONTRIBUTING / CHANGELOG / docs/supplier-*.md）
+- 开发框架文档（README / CONTRIBUTING / CHANGELOG / docs/*.md）
+- 开发记录文档（`HANDOFF.md` / `docs/DEVELOPMENT_SPEC.md` / `docs/DEVELOPMENT_EXPERIENCE.md` 等）— **必须脱敏**（真实坐标换示例值、车型代号换「车型A/B/C」、供应商数据抽象化）
 
 **不入库**（仅本地，见 .gitignore）:
-- 真实车型数据（`data/vehicles/*.json`, `data/exterior/*.json`）
-- 内部开发文档（`HANDOFF.md`, `docs/DEVELOPMENT_SPEC.md`, `docs/exterior-mirror-inputs.md`, `docs/exterior-step-extract-plan.md`）
-- 平台落地页（`modules/smart/public/index.html`）
-- 供应商数据 / 产品代号 / 平台部署细节
+- 真实车型数据（`data/vehicles/*.json`, `data/exterior/*.json` 及 `.outline.json`）
+- 平台落地页（`modules/smart/public/index.html`，含组织名/部署细节）
+- 供应商原始 STEP 文件与提取产物（`**/data/tmp/`）
 
 ## 7. 分支策略
 
