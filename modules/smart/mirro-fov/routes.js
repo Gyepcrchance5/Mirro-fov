@@ -943,12 +943,15 @@ function streamStepToTmp(req, filename, onDone, onError) {
 // 通用: spawn Python 提取脚本 (进度收集 + 动态超时 + 退出处理)。
 // 动态超时 = min(1800s, 120s + 1s/MB): 141MB STEP → ~261s, 不误杀大文件
 function spawnStepExtract(opts) {
-  const { stepPath, outPath, script, extraArgs, progressMap, progressKey, failMsg, success, failure } = opts;
+  const { stepPaths, outPath, script, extraArgs, progressMap, progressKey, failMsg, success, failure } = opts;
+  const paths = Array.isArray(stepPaths) ? stepPaths : [stepPaths];
   let sizeMB = 0;
-  try { sizeMB = fs.statSync(stepPath).size / 1048576; } catch (e) { /* ignore */ }
+  for (const sp of paths) {
+    try { sizeMB += fs.statSync(sp).size / 1048576; } catch (e) { /* ignore */ }
+  }
   const timeoutMs = Math.min(1800000, 120000 + sizeMB * 1000);
-  console.log(`[routes][spawn] ${progressKey}: size=${sizeMB.toFixed(1)}MB → timeout=${Math.round(timeoutMs / 1000)}s`);
-  const args = [path.join(__dirname, 'python', script), stepPath].concat(extraArgs || []);
+  console.log(`[routes][spawn] ${progressKey}: ${paths.length} 文件 size=${sizeMB.toFixed(1)}MB → timeout=${Math.round(timeoutMs / 1000)}s`);
+  const args = [path.join(__dirname, 'python', script)].concat(paths).concat(extraArgs || []);
   const child = spawn('python', args, { cwd: PY_PROJECT });
   let done = false;
   let stderrTail = '';
@@ -1017,7 +1020,7 @@ router.post('/api/step/upload', (req, res) => {
       ? '内镜向导提取失败 (需含"镜面/内镜片"面的内后视镜 STEP, 外镜整车不适用)'
       : '后挡风提取失败 (请确认文件为后挡风模型 STEP)';
     spawnStepExtract({
-      stepPath, outPath: expectedOut, script, extraArgs,
+      stepPaths: [stepPath], outPath: expectedOut, script, extraArgs,
       progressMap: stepProgress, progressKey: filename,
       failMsg,
       success: (outlineJson) => {
@@ -1068,7 +1071,7 @@ router.post('/api/exterior/extract', (req, res) => {
     try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
 
     spawnStepExtract({
-      stepPath, outPath, script: 'step_exterior_extract.py', extraArgs: ['--output', outPath],
+      stepPaths: [stepPath], outPath, script: 'step_exterior_extract.py', extraArgs: ['--output', outPath],
       progressMap: extExtractProgress, progressKey: filename,
       failMsg: '外镜 STEP 提取失败, 请确认文件为含球面镜 (SPHERICAL_SURFACE) 的外镜整车模型',
       success: () => res.json({ ok: true, path: outPath, vehicles: scanExteriorVehicles() }),
@@ -1077,6 +1080,43 @@ router.post('/api/exterior/extract', (req, res) => {
   };
 
   streamStepToTmp(req, filename, onDone, (status, msg) => res.status(status).json({ ok: false, error: msg }));
+});
+
+// ---- 外后视镜: 多文件上传 (同一车型多个 STEP 合并提取) ----
+// 第一步: 上传单个文件到 tmp (仅落盘, 不提取), 返回文件名; 前端逐文件收集后调 extract-multi
+router.post('/api/exterior/upload-tmp', (req, res) => {
+  const filename = decodeURIComponent(req.get('x-filename') || 'upload.stp').replace(/[^a-zA-Z0-9._-]/g, '_');
+  streamStepToTmp(req, filename, (stepPath) => {
+    res.json({ ok: true, filename, path: stepPath });
+  }, (status, msg) => res.status(status).json({ ok: false, error: msg }));
+});
+
+// 第二步: 合并提取 — 接收已落盘 tmp 的文件名列表, 一次性合并提取全部参数
+router.post('/api/exterior/extract-multi', jsonParser, (req, res) => {
+  const files = (req.body && req.body.files) || [];
+  if (!Array.isArray(files) || files.length === 0) {
+    return res.status(400).json({ ok: false, error: '缺少 files 列表' });
+  }
+  const stepPaths = [];
+  for (const f of files) {
+    const name = String(f).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const p = path.join(STEP_TMP_DIR, name);
+    if (!path.resolve(p).startsWith(path.resolve(STEP_TMP_DIR)) || !fs.existsSync(p)) {
+      return res.status(400).json({ ok: false, error: '临时文件不存在或越界: ' + name });
+    }
+    stepPaths.push(p);
+  }
+  // 输出名: 用第一个文件的 stem (多文件合并后仍是一个车型 JSON)
+  const stem = path.basename(stepPaths[0], path.extname(stepPaths[0]));
+  const outPath = path.join(STEP_TMP_DIR, stem + '.json');
+  try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
+  spawnStepExtract({
+    stepPaths, outPath, script: 'step_exterior_extract.py', extraArgs: ['--output', outPath],
+    progressMap: extExtractProgress, progressKey: files.join('+'),
+    failMsg: '外镜多文件提取失败, 请确认文件含球面镜 (SPHERICAL_SURFACE) 与参数',
+    success: () => res.json({ ok: true, path: outPath, vehicles: scanExteriorVehicles() }),
+    failure: (msg) => res.status(400).json({ ok: false, error: msg }),
+  });
 });
 
 // ---- 内后视镜: STEP 上传一键提取 (raw 二进制 → 临时文件 → spawn step_interior_extract) ----
@@ -1099,7 +1139,7 @@ router.post('/api/interior/extract', (req, res) => {
     try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
 
     spawnStepExtract({
-      stepPath, outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
+      stepPaths: [stepPath], outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
       progressMap: intExtractProgress, progressKey: filename,
       failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜片面) 的整车 STEP',
       success: (result) => res.json({ ok: true, path: outPath, result }),
@@ -1129,7 +1169,7 @@ router.post('/api/exterior/extract/retry', jsonParser, (req, res) => {
   }
   try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
   spawnStepExtract({
-    stepPath, outPath, script: 'step_exterior_extract.py', extraArgs: ['--output', outPath],
+    stepPaths: [stepPath], outPath, script: 'step_exterior_extract.py', extraArgs: ['--output', outPath],
     progressMap: extExtractProgress, progressKey: name,
     failMsg: '外镜 STEP 提取失败, 请确认文件为含球面镜 (SPHERICAL_SURFACE) 的外镜整车模型',
     success: () => res.json({ ok: true, path: outPath, vehicles: scanExteriorVehicles() }),
@@ -1154,7 +1194,7 @@ router.post('/api/interior/extract/retry', jsonParser, (req, res) => {
   }
   try { fs.unlinkSync(outPath); } catch (e) { /* 不存在忽略 */ }
   spawnStepExtract({
-    stepPath, outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
+    stepPaths: [stepPath], outPath, script: 'step_interior_extract.py', extraArgs: ['--output', outPath],
     progressMap: intExtractProgress, progressKey: name,
     failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜片面) 的整车 STEP',
     success: (result) => res.json({ ok: true, path: outPath, result }),

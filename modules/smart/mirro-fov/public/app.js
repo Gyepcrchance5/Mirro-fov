@@ -21,6 +21,8 @@
   const PLOT_MARGIN_T = 20;   // 顶部留白
   const PLOT_AXIS_B = 54;     // x 轴标题 + 刻度高度
   const PLOT_LEGEND_H = 36;   // 底部横向图例一行高度
+  // 底部图例 y (paper 坐标, 负=plot 下方): 换算成固定像素偏移, 放在 x 轴标题下方 (轴标题 54px + 图例 36px = 90px 底边距)
+  const bottomLegendY = plotAreaH => -(PLOT_AXIS_B / Math.max(80, plotAreaH));
 
   // ====== DOM refs ======
   const $ = id => document.getElementById(id);
@@ -52,6 +54,7 @@
   // 提取失败后重试所用的 sanitize 文件名 (STEP 已在盘, 重试不重传)
   let extLastSafeName = null;    // 外镜校核页 (doExtUpload)
   let wizExtLastSafeName = null; // 外镜向导 (doWizExtUpload)
+  let wizExtLastFiles = null;    // 外镜向导多文件模式: 已落盘 tmp 的文件名列表 (retry 用)
   let wizIntLastSafeName = null; // 内镜向导 (doWizIntUpload)
 
   // ====== 通用 XHR 上传 (流式进度 + JSON 解析 + 友好错误) ======
@@ -405,6 +408,11 @@
       showarrow: false, font: { size: 20, color: 'white' },
       bgcolor: pass ? C.hit : C.miss, bordercolor: pass ? C.hit : C.miss,
       borderwidth: 2, borderpad: 6, align: 'center' };
+    // 显式高度: 先算内容比例 + 容器宽 → 定 plot 高度 + 图例 y (避免 tall plot 图例随高度放大越界)
+    const viewEl = $('mirror-view');
+    const w = viewEl && viewEl.parentElement ? viewEl.parentElement.clientWidth - 20 : 600;
+    const contentRatio = (hw * 2 + pad * 2) / (hh * 2 + pad * 2);
+    const plotAreaH = w / contentRatio;
     const layout = {
       xaxis: { title: 'lx (镜面右向, mm)', range: [-hw - pad, hw + pad],
                scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
@@ -415,15 +423,10 @@
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
       annotations: [Object.assign({ text: pass ? '<b>PASS</b>' : '<b>FAIL</b>' }, passBadge)].concat(annotations),
       shapes,
-      legend: { x: 0.5, y: -0.2, xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
+      legend: { x: 0.5, y: bottomLegendY(plotAreaH), xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
-    // 显式高度: 容器宽度 / 内容比例 → Plotly 渲染时拿到像素值
-    // (不能用 CSS aspect-ratio — Plotly 初始化时 CSS 高度可能未解析)
-    const viewEl = $('mirror-view');
     if (viewEl) {
-      const w = viewEl.parentElement.clientWidth - 20; // panel-frame padding
-      const contentRatio = (hw * 2 + pad * 2) / (hh * 2 + pad * 2);
-      viewEl.style.height = Math.max(120, Math.round(w / contentRatio) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H) + 'px';
+      viewEl.style.height = Math.max(120, Math.round(plotAreaH) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H) + 'px';
     }
     Plotly.react('mirror-view', traces, layout, { responsive: true });
   }
@@ -440,15 +443,17 @@
       line: { color: C.mirrorEdge, width: 3 },
       name: 'CAS外框(整体玻璃)', hoverinfo: 'name',
     });
-    // 透光区
-    const tzClosed = rw.tz2D.concat([rw.tz2D[0]]);
-    traces.push({
-      x: tzClosed.map(p => p[0]), y: tzClosed.map(p => p[1]),
-      mode: 'lines', fill: 'toself',
-      fillcolor: 'rgba(0,113,227,0.15)',
-      line: { color: C.hit, width: 2, dash: 'dash' },
-      name: '透光区', hoverinfo: 'name',
-    });
+    // 透光区 (仅 hasTz 时渲染; 无透光区时 tz 退化为 outline, 会与 CAS 外框完全重叠)
+    if (rw.hasTz) {
+      const tzClosed = rw.tz2D.concat([rw.tz2D[0]]);
+      traces.push({
+        x: tzClosed.map(p => p[0]), y: tzClosed.map(p => p[1]),
+        mode: 'lines', fill: 'toself',
+        fillcolor: 'rgba(0,113,227,0.15)',
+        line: { color: C.hit, width: 2, dash: 'dash' },
+        name: '透光区', hoverinfo: 'name',
+      });
+    }
     // 中心眼 3 交点 + 距边距离
     const shapes = [], annotations = [], hitPts = [];
     // 画幅范围 (以 CAS 外框为准) — 供点标签自适应定位
@@ -505,6 +510,11 @@
       showarrow: false, font: { size: 20, color: 'white' },
       bgcolor: pass ? C.hit : C.miss, bordercolor: pass ? C.hit : C.miss,
       borderwidth: 2, borderpad: 6, align: 'center' };
+    // 显式高度: 先算内容比例 + 容器宽 → 定 plot 高度 + 图例 y (避免 tall plot 图例越界)
+    const rwEl = $('rear-window-view');
+    const rwCw = rwEl && rwEl.parentElement ? rwEl.parentElement.clientWidth - 20 : 600;
+    const ratio = (rwW + pad * 2) / (rwH + pad * 2);
+    const plotAreaH = rwCw / ratio;
     const layout = {
       xaxis: { title: 'u (玻璃宽向, mm)', range: [Math.min(...xs) - pad, Math.max(...xs) + pad],
                scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
@@ -515,14 +525,10 @@
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
       annotations: [Object.assign({ text: pass ? '<b>PASS</b>' : '<b>FAIL</b>' }, passBadge)].concat(annotations),
       shapes,
-      legend: { x: 0.5, y: -0.2, xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
+      legend: { x: 0.5, y: bottomLegendY(plotAreaH), xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
-    // 显式高度: 容器宽度 / 内容比例 → 填满无变形无留白
-    const rwEl = $('rear-window-view');
     if (rwEl) {
-      const rwCw = rwEl.parentElement.clientWidth - 20;
-      const ratio = (rwW + pad * 2) / (rwH + pad * 2);
-      rwEl.style.height = Math.max(120, Math.round(rwCw / ratio) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H) + 'px';
+      rwEl.style.height = Math.max(120, Math.round(plotAreaH) + PLOT_MARGIN_T + PLOT_AXIS_B + PLOT_LEGEND_H) + 'px';
     }
     Plotly.react('rear-window-view', traces, layout, { responsive: true });
     const rwCount = $('rw-count');
@@ -1002,48 +1008,55 @@
     $('wizard-exterior-page').querySelector('.wizard-step[data-step="' + (current - 1) + '"]').style.display = '';
   }
 
-  // Step 1: 上传整车 STEP → 提取到 tmp → 读 config(raw) + verify(viz) → 预览左右轮廓/球面偏差/球心
+  // Step 1: 上传 (一个或多个) STEP → 逐文件落盘 tmp → 合并提取 → 预览
   async function doWizExtUpload() {
     const input = $('wiz-ext-step');
-    const file = input.files && input.files[0];
-    if (!file) { $('wiz-ext-result').className = 'wizard-result'; $('wiz-ext-result').textContent = '请先选择文件'; return; }
+    const files = input.files ? Array.from(input.files) : [];
+    const resultDiv = $('wiz-ext-result');
+    if (!files.length) { resultDiv.className = 'wizard-result'; resultDiv.textContent = '请先选择文件'; return; }
     // 预检: 超过 500MB 前端直接拦截
-    if (file.size > 500 * 1024 * 1024) {
-      alert('文件 ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制, 请确认 STEP 文件');
-      return;
+    for (const file of files) {
+      if (file.size > 500 * 1024 * 1024) {
+        alert('文件 ' + file.name + ' ' + (file.size / 1048576).toFixed(0) + 'MB 超过 500MB 限制');
+        return;
+      }
     }
     const btn = $('wiz-ext-upload-btn');
     btn.disabled = true; btn.textContent = '提取中…';
-    const resultDiv = $('wiz-ext-result');
     resultDiv.className = 'wizard-result';
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    wizExtLastSafeName = safeName;
     hideRetry('wiz-ext-result');
-    const poll = setInterval(async () => {
-      try {
-        const r = await fetch('api/exterior/extract/progress?name=' + encodeURIComponent(safeName));
-        const d = await r.json();
-        if (d.progress) resultDiv.textContent = d.progress;
-      } catch (e) { /* 轮询失败忽略 */ }
-    }, 500);
+    wizExtLastFiles = null;
+    wizExtLastSafeName = files[0].name.replace(/[^a-zA-Z0-9._-]/g, '_');
     try {
-      resultDiv.textContent = `上传 0%, 提取外镜中...`;
-      const d = await uploadStep('api/exterior/extract', file, {
-        onProgress: (loaded, total) => {
-          if (total > 0) resultDiv.textContent = `上传 ${(loaded / total * 100).toFixed(0)}%, 提取外镜中...`;
-        },
-      });
-      if (!d.ok) throw new Error(d.error);
-      await wizExtHandleResult(d);
+      // 1. 逐文件上传到 tmp (仅落盘, 不提取)
+      const names = [];
+      for (let i = 0; i < files.length; i++) {
+        resultDiv.textContent = `上传 ${i + 1}/${files.length}: ${files[i].name}`;
+        const d = await uploadStep('api/exterior/upload-tmp', files[i], {
+          onProgress: (loaded, total) => {
+            if (total > 0) resultDiv.textContent = `上传 ${i + 1}/${files.length} ${(loaded / total * 100).toFixed(0)}%`;
+          },
+        });
+        if (!d.ok) throw new Error(d.error);
+        names.push(d.filename);
+      }
+      wizExtLastFiles = names;
+      // 2. 合并提取
+      resultDiv.textContent = '合并提取中...';
+      const d2 = await fetch('api/exterior/extract-multi', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: names }),
+      }).then(r => r.json());
+      if (!d2.ok) throw new Error(d2.error);
+      await wizExtHandleResult(d2);
       resultDiv.className = 'wizard-result ok';
-      resultDiv.textContent = '提取完成';
+      resultDiv.textContent = `提取完成 (${files.length} 文件合并)`;
       hideRetry('wiz-ext-result');
     } catch (e) {
       resultDiv.className = 'wizard-result err';
       resultDiv.textContent = '提取失败: ' + e.message;
       showRetry('wiz-ext-result', doWizExtRetry);
     } finally {
-      clearInterval(poll);
       btn.disabled = false; btn.textContent = '上传并提取';
     }
   }
@@ -1069,28 +1082,31 @@
     if (sumEl) sumEl.innerHTML = wizExtSummaryHtml(cfg);
   }
 
-  // 重试提取: STEP 已在盘, 不重传, 调 /api/exterior/extract/retry 重新 spawn
+  // 重试提取: 文件已在盘, 不重传, 重新 spawn (多文件走 extract-multi, 单文件走 retry)
   async function doWizExtRetry() {
     const resultDiv = $('wiz-ext-result');
     const retryBtn = $('wiz-ext-result-retry');
     if (retryBtn) retryBtn.disabled = true;
-    const safeName = wizExtLastSafeName || '';
-    if (!safeName) { alert('没有可重试的文件, 请重新上传'); return; }
-    const poll = setInterval(async () => {
-      try {
-        const r = await fetch('api/exterior/extract/progress?name=' + encodeURIComponent(safeName));
-        const d = await r.json();
-        if (d.progress) resultDiv.textContent = d.progress;
-      } catch (e) { /* 忽略 */ }
-    }, 500);
     try {
       resultDiv.className = 'wizard-result';
-      resultDiv.textContent = '重试提取中...';
-      const r = await fetch('api/exterior/extract/retry', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: safeName }),
-      });
-      const d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      let d;
+      if (wizExtLastFiles && wizExtLastFiles.length) {
+        resultDiv.textContent = '合并提取中...';
+        const r = await fetch('api/exterior/extract-multi', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: wizExtLastFiles }),
+        });
+        d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      } else {
+        const safeName = wizExtLastSafeName || '';
+        if (!safeName) { alert('没有可重试的文件, 请重新上传'); return; }
+        resultDiv.textContent = '重试提取中...';
+        const r = await fetch('api/exterior/extract/retry', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: safeName }),
+        });
+        d = await r.json().catch(() => ({ ok: false, error: '服务器返回非 JSON' }));
+      }
       if (!d.ok) throw new Error(d.error);
       await wizExtHandleResult(d);
       resultDiv.className = 'wizard-result ok';
@@ -1100,7 +1116,6 @@
       resultDiv.className = 'wizard-result err';
       resultDiv.textContent = '重试提取失败: ' + e.message;
     } finally {
-      clearInterval(poll);
       if (retryBtn) retryBtn.disabled = false;
     }
   }
@@ -1150,6 +1165,13 @@
     const rows = [];
     const add = (label, value, good) => rows.push(`<tr><td class="st-k">${label}</td><td class="st-v">${value}</td><td class="st-s">${good ? ok : warn}</td></tr>`);
     const fmt3 = v => (Array.isArray(v) && v.length >= 3) ? '[' + v.map(x => Number.isFinite(x) ? x.toFixed(3) : '-').join(', ') + ']' : 'null';
+    // 镜体坐标系 = 原点(旋转中心) + 旋转轴(Y, 系统算) + 折叠轴(Z)
+    const frameTxt = (m) => {
+      if (!m || !Array.isArray(m.turret_axis_p1)) return 'null';
+      const rot = Array.isArray(m.rotation_axis_dir) ? fmt3(m.rotation_axis_dir) : 'null';
+      const fold = Array.isArray(m.fold_axis_dir) ? fmt3(m.fold_axis_dir) : 'null';
+      return `原点 ${fmt3(m.turret_axis_p1)} · 旋转轴 ${rot} · 折叠轴 ${fold}`;
+    };
 
     const L = (cfg.mirrors && cfg.mirrors.left) || {};
     const R = (cfg.mirrors && cfg.mirrors.right) || {};
@@ -1160,8 +1182,8 @@
     add('SR 校核', L.sr_fit != null ? L.sr_fit.toFixed(3) + ' m' : 'null', L.sr_fit != null);
     add('球心 (左)', fmt3(L.sphere_center), Array.isArray(L.sphere_center));
     add('球心 (右)', fmt3(R.sphere_center), Array.isArray(R.sphere_center));
-    add('轴线 (左)', fmt3(L.rotation_axis_dir), Array.isArray(L.rotation_axis_dir));
-    add('轴线 (右)', fmt3(R.rotation_axis_dir), Array.isArray(R.rotation_axis_dir));
+    add('镜体坐标系 (左)', frameTxt(L), Array.isArray(L.rotation_axis_dir));
+    add('镜体坐标系 (右)', frameTxt(R), Array.isArray(R.rotation_axis_dir));
     const eye = drv.eye_left_raw != null
       ? `${fmt3(drv.eye_left_raw)} · IPD ${drv.interpupillary_distance != null ? (drv.interpupillary_distance * 1000).toFixed(1) + 'mm' : 'null'}` : 'null';
     add('眼点', eye, drv.eye_left_raw != null);
@@ -1185,7 +1207,7 @@
       const isDefault = d => !d || (Math.abs(d[0]) < 1e-6 && Math.abs(d[1] - 1) < 1e-6 && Math.abs(d[2]) < 1e-6);
       if (isDefault(axL) || isDefault(axR)) {
         btn.disabled = false; btn.textContent = '保存并校核';
-        alert('STEP 未提取到镜体旋转轴 (AXIS2_PLACEMENT_3D)。\n请确认供应商 STEP 含命名「旋转轴左/旋转轴右」的镜体坐标系。');
+        alert('STEP 未提取到镜体坐标系 (AXIS2_PLACEMENT_3D)。\n请确认供应商 STEP 含命名「左镜体坐标系/右镜体坐标系」的坐标系。');
         return;
       }
       if (!config.vehicle) config.vehicle = {};
@@ -1236,7 +1258,7 @@
 · 镜片左 / 镜片右 —— 左右凸球面镜片面
 
 【坐标系的标注】AXIS2_PLACEMENT_3D
-· 旋转轴左 / 旋转轴右 —— 镜体坐标系（放旋转中心 p1）
+· 左镜体坐标系 / 右镜体坐标系 —— 镜体坐标系（原点=旋转中心 p1，Z轴=折叠轴，X轴=镜面右向）
 
 【点的标注】CARTESIAN_POINT
 · 眼点左 / 眼点右 —— 驾驶员左右眼点
@@ -1900,16 +1922,19 @@
       });
     }
     const us = M.outlineUV.map(p => p[0]), vs = M.outlineUV.map(p => p[1]);
-    const pad = Math.max(Math.max(...us) - Math.min(...us), Math.max(...vs) - Math.min(...vs)) * 0.25;
+    const uMin = Math.min(...us), uMax = Math.max(...us), vMin = Math.min(...vs), vMax = Math.max(...vs);
+    const pad = Math.max(uMax - uMin, vMax - vMin) * 0.25;
+    // 外镜固定高度 520px (容器全宽, 1:1 等比例下动态高度会过大); 图例 y 按固定 plot 高度换算
+    const plotAreaH = 520 - PLOT_MARGIN_T - PLOT_AXIS_B - PLOT_LEGEND_H;
     const badge = { x: 0.99, xref: 'paper', y: 0.98, yref: 'paper', showarrow: false, font: { size: 20, color: 'white' },
       bgcolor: pass ? C.hit : C.miss, bordercolor: pass ? C.hit : C.miss, borderwidth: 2, borderpad: 6, align: 'center' };
     const layout = {
-      xaxis: { title: 'u (镜面右向, mm)', range: [Math.min(...us) - pad, Math.max(...us) + pad], scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
-      yaxis: { title: 'v (镜面上向, mm)', range: [Math.min(...vs) - pad, Math.max(...vs) + pad], gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+      xaxis: { title: 'u (镜面右向, mm)', range: [uMin - pad, uMax + pad], scaleanchor: 'y', scaleratio: 1, gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
+      yaxis: { title: 'v (镜面上向, mm)', range: [vMin - pad, vMax + pad], gridcolor: '#f0f0f2', zerolinecolor: '#e4e4e8' },
       margin: { l: 50, r: 20, t: PLOT_MARGIN_T, b: PLOT_AXIS_B + PLOT_LEGEND_H }, paper_bgcolor: '#fff', plot_bgcolor: '#fff',
       font: { family: '"Segoe UI", "Microsoft YaHei", sans-serif', color: '#9a9aa0', size: 11 },
       annotations: [Object.assign({ text: pass ? '<b>PASS</b>' : '<b>FAIL</b>' }, badge)],
-      legend: { x: 0.5, y: -0.2, xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
+      legend: { x: 0.5, y: bottomLegendY(plotAreaH), xanchor: 'center', yanchor: 'top', orientation: 'h', bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#e4e4e8', borderwidth: 1 },
     };
     Plotly.react(divId, traces, layout, { responsive: true });
   }

@@ -239,8 +239,8 @@
 
             <!-- 上传整车 STEP -->
             <div class="wizard-field">
-              <label class="wizard-label">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span></label>
-              <input id="wiz-ext-step" type="file" accept=".stp,.step" class="form-control form-control-sm">
+              <label class="wizard-label">整车 STEP <span class="wizard-tag wizard-tag-required">必填</span> <small class="text-muted">(可多选, 多文件自动合并)</small></label>
+              <input id="wiz-ext-step" type="file" accept=".stp,.step" class="form-control form-control-sm" multiple>
               <div class="wizard-actions">
                 <button id="wiz-ext-upload-btn" class="btn btn-solid btn-sm">上传并提取</button>
                 <span id="wiz-ext-result" class="wizard-result">选择文件后自动提取</span>
@@ -543,7 +543,7 @@
 
   </div>
 
-  <script src="app.js?v=20260818ad"></script>
+  <script src="app.js?v=20260818ai"></script>
   <script src="/ai-widget.js"></script>
 </body>
 </html>

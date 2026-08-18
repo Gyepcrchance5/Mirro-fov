@@ -245,14 +245,15 @@ def _parse_direction(entities, eid):
 
 
 def find_mirror_frames(entities, points, spheres=None):
-    """从 AXIS2_PLACEMENT_3D 提取左右镜体坐标系 (turret p1 + 旋转轴)。
+    """从 AXIS2_PLACEMENT_3D 提取左右「镜体坐标系」(每镜一个坐标系 = 原点 + 两轴)。
 
-    AXIS2_PLACEMENT_3D('name', #location, #axis, #ref_dir)
-      location = CARTESIAN_POINT (turret p1 / 球铰点)
-      axis     = DIRECTION (折叠轴, 接近整车 Z)
-      ref_dir  = DIRECTION (镜面右向参考)
+    镜体坐标系 = 放在旋转中心 (turret p1 / 球铰点) 的坐标系:
+      AXIS2_PLACEMENT_3D('name', #location, #axis, #ref_dir)
+        location = CARTESIAN_POINT — 原点 = 旋转中心 (turret p1 / 球铰点)
+        axis     = DIRECTION      — Z 轴 = 折叠轴 (≈整车 Z, 水平折叠方向)
+        ref_dir  = DIRECTION      — X 轴 = 镜面右向参考
 
-    每个坐标系三正交轴: X=ref_dir, Z=axis, Y=normalize(Z×X) (=旋转轴)。
+    三正交轴: X=ref_dir, Z=axis, Y=normalize(Z×X) = 旋转轴 (上下调节所绕, 系统自动算)。
     自动判定 (不依赖供应商 Z/X 标注): fold=三轴中 |z| 最大; tilt=剩余两轴中 |y| 最大;
     right=第三; rotation_axis_dir=tilt。
 
@@ -265,9 +266,10 @@ def find_mirror_frames(entities, points, spheres=None):
     返回 {side: {turret_axis_p1[m], rotation_axis_dir, fold_axis_dir}}; 无有效坐标系时 {}。
     """
     sphere_centers = [np.array(s['center']) for s in spheres] if spheres else []
-    # 命名优先: 供应商命名 旋转轴左/旋转轴右 (旧名 MIRROR_FRAME_LEFT/RIGHT) 直接定位,
-    # 跳过结构自检阈值 (命名是明确契约, 阈值仅用于未命名猜测)
-    FRAME_ALIAS = {'旋转轴左': 'left', '旋转轴右': 'right',
+    # 命名优先: 供应商命名 左镜体坐标系/右镜体坐标系 (旧名 旋转轴左/右、MIRROR_FRAME_LEFT/RIGHT 兼容)
+    # 直接定位, 跳过结构自检阈值 (命名是明确契约, 阈值仅用于未命名猜测)
+    FRAME_ALIAS = {'左镜体坐标系': 'left', '右镜体坐标系': 'right',
+                   '旋转轴左': 'left', '旋转轴右': 'right',
                    'MIRROR_FRAME_LEFT': 'left', 'MIRROR_FRAME_RIGHT': 'right'}
     candidates = []  # (side, frame)
     for eid, (t, args) in entities.items():
@@ -575,17 +577,40 @@ def extract_exterior(entities, points, step_name="step", manual=None):
     return result
 
 
+def parse_and_merge(paths):
+    """解析多个 STEP 文件并合并 (实体/点 ID 重编号), 供多文件上传凑齐参数。
+
+    文件顺序无关: 后解析文件的实体/点 ID 加偏移, 避免与已有 ID 冲突;
+    args 内的 #ref 引用同步重编号。合并后一次 extract_exterior 提取全部参数。
+    """
+    entities = {}
+    points = {}
+    for p in paths:
+        e, pts = scs.parse_step(p)
+        if not e:
+            print(f"  ⚠️ 空文件或无 DATA: {p}", file=sys.stderr)
+            continue
+        offset = max(list(entities.keys()) + list(points.keys()), default=0) + 1
+        if offset > 1:
+            e = {eid + offset: (etype, re.sub(r'#(\d+)', lambda m: '#' + str(int(m.group(1)) + offset), args))
+                 for eid, (etype, args) in e.items()}
+            pts = {pid + offset: pt for pid, pt in pts.items()}
+        entities.update(e)
+        points.update(pts)
+    return entities, points
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="外镜数据一条龙提取")
-    parser.add_argument("step_file")
+    parser.add_argument("step_files", nargs='+', help="一个或多个 STEP 文件 (多文件自动合并)")
     parser.add_argument("--output", "-o", default=None, help="输出 JSON 路径")
     parser.add_argument("--json", default=None, help="现有数据 JSON (同车型, 补充未提取字段)")
     args = parser.parse_args()
 
-    print(f"解析 STEP: {args.step_file}")
+    print(f"解析 STEP: {len(args.step_files)} 个文件")
     print("STEP_PROGRESS|解析 STEP 文件中...")
-    entities, points = scs.parse_step(args.step_file)
+    entities, points = parse_and_merge(args.step_files)
     print(f"实体: {len(entities)}, 点: {len(points)}")
     print(f"STEP_PROGRESS|已解析 {len(entities)} 实体, 提取镜面轮廓")
 
@@ -593,7 +618,7 @@ def main():
     if args.json:
         manual = json.load(open(args.json, encoding='utf-8'))
 
-    result = extract_exterior(entities, points, step_name=Path(args.step_file).stem, manual=manual)
+    result = extract_exterior(entities, points, step_name=Path(args.step_files[0]).stem, manual=manual)
     if result is None:
         return
 
