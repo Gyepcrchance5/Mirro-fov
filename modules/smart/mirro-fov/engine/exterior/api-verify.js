@@ -79,6 +79,8 @@ function verifyOne(side, raw, opts = {}) {
   const doorOuterY = raw.door_panel[`door_outer_Y_${side}`];
   const ground = Ground.fromTwoPoints(raw.ground.front_mid, raw.ground.rear_mid);
   const regulation = raw.regulation;
+  // 轮廓度 (加工误差, 对称 ±, mm): 车型数据 profile_tol_mm, 缺省 0.3 (STEP 只有名义几何, 轮廓度需供应商图纸给)
+  const profileTolMm = (typeof mir.profile_tol_mm === 'number' && Number.isFinite(mir.profile_tol_mm)) ? mir.profile_tol_mm : 0.3;
 
   // coplanarTolMm=1.0: 球面帽浅曲 (残差 0.3~0.5mm) 时走 planar-cut (用已知 SR 约束), 避免 general 拟合在浅帽上不稳定
   const fit = fitSphereFromOutline(mir.outline_raw, { srDesign: mir.sr_fit, eye: eyeCenter, supplierCenter: mir.supplier_sphere_center, coplanarTolMm: 1.0 });
@@ -87,14 +89,14 @@ function verifyOne(side, raw, opts = {}) {
   let mirror = new ExteriorMirror({ radius: mir.sr_fit, sphereCenter: fit.center, outline: projOutline, turretAxisPoint: mir.turret_axis_p1, turretAxisDir: mir.rotation_axis_dir, foldAxisDir: mir.fold_axis_dir });
   if (psi || theta) mirror = mirror.rotated2D(psi, theta);
 
-  const v = verifyExterior(eyes, doorOuterY, ground, mirror, { samplePerEdge, minMarginMm, regulation });
+  const v = verifyExterior(eyes, doorOuterY, ground, mirror, { samplePerEdge, minMarginMm, profileTolMm, regulation });
   const tris = buildTriangles(eyeCenter, doorOuterY, ground, mirror, regulation);
   // search=false(默认): 只做当前角度校核, 不做二维搜索 (快); search=true: 做二维搜索拿可调窗口
   const search = doSearch
     ? searchExteriorAngles(eyes, doorOuterY, ground, mirror, { step: 0.5, range: 3.0, regulation })
     : null;
 
-  return { side, fit, gate, mirror, v, tris, search, mir, eyeCenter, eyes, doorOuterY, ground, regulation, projOutline };
+  return { side, fit, gate, mirror, v, tris, search, mir, eyeCenter, eyes, doorOuterY, ground, regulation, projOutline, profileTolMm, minMarginMm };
 }
 
 /** 双镜合并校核: 返回 left/right 结果 + 2D 反射面投影 viz */
@@ -146,11 +148,11 @@ function verifyExteriorBoth(p, opts = {}) {
             }
           }
         }
-        const allVisible = pts.every(p => p.onSurface && p.margin != null && p.margin >= 3);
+        const allVisible = pts.every(p => p.onSurface && p.margin != null && p.margin >= r.minMarginMm);
         projections.push({ eye: eyeName, tri: triName, points: pts, allVisible });
       }
     }
-    return { side: r.side, outlineUV, projections, mirrorPass: r.v.mirrorPass };
+    return { side: r.side, outlineUV, projections, mirrorPass: r.v.mirrorPass, profileTolMm: r.profileTolMm };
   }
 
   const viz = {
@@ -177,6 +179,7 @@ function verifyExteriorBoth(p, opts = {}) {
       mirrorPass: r.v.mirrorPass, nearPass: r.v.near.pass, farPass: r.v.far.pass,
       nearMinMargin: nearMin === null ? null : r4(nearMin),
       farMinMargin: farMin === null ? null : r4(farMin),
+      profileTolMm: r.profileTolMm, minMarginMm: r.minMarginMm,
       nearEdges: r.v.near.edges.map(e => ({ name: e.name, pass: e.pass, visible: e.samples.filter(s => s.visible).length + '/' + e.samples.length })),
       farEdges: r.v.far.edges.map(e => ({ name: e.name, pass: e.pass, visible: e.samples.filter(s => s.visible).length + '/' + e.samples.length })),
       search: r.search ? {

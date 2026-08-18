@@ -91,8 +91,12 @@ def extract_mirror_outline(face_id, entities, points, sphere_center, radius, n=4
         # 终点顶点
         outline.append([float(v_end[0]), float(v_end[1]), float(v_end[2])])
 
-    # 闭合
-    if outline and np.linalg.norm(np.array(outline[0]) - np.array(outline[-1])) > 8:
+    # 删除退化环的重复描边段 (CAD 导出常见: 路径出去又沿原路折回) — 对齐内镜/后挡风
+    if outline:
+        outline = st.strip_doubled_paths(np.array(outline), tol_mm=2.0).tolist()
+
+    # 闭合 (strip_doubled_paths 可能删掉闭合点, 重新闭合)
+    if outline and np.linalg.norm(np.array(outline[0]) - np.array(outline[-1])) > 1.0:
         outline.append(outline[0])
 
     return outline, []

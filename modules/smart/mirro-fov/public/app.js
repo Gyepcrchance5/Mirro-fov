@@ -1554,6 +1554,7 @@
       const set = (id, v) => { const el = $(id); if (el) el.value = v; };
       const L = d.mirrors.left, R = d.mirrors.right;
       set('ext-sr-fit', L.sr_fit);
+      set('ext-profile-tol', L.profile_tol_mm ?? 0.3);
       ['x', 'y', 'z'].forEach((ax, i) => {
         set('ext-c-L-' + ax, L.sphere_center[i]); set('ext-c-R-' + ax, R.sphere_center[i]);
         set('ext-p1-L-' + ax, L.turret_axis_p1[i]); set('ext-p1-R-' + ax, R.turret_axis_p1[i]);
@@ -1615,15 +1616,25 @@
     return v;
   }
 
-  // 从输入卡回写轴线到完整 JSON 副本 (深拷贝, 不污染 extRawConfig)
+  // 读取镜片轮廓度输入 (mm, 对称 ±), 非法/非正回退 0.3
+  function readProfileTol() {
+    const el = $('ext-profile-tol');
+    const v = el ? parseFloat(el.value) : NaN;
+    return (Number.isFinite(v) && v > 0) ? v : 0.3;
+  }
+
+  // 从输入卡回写轴线 + 轮廓度到完整 JSON 副本 (深拷贝, 不污染 extRawConfig)
   function extPatchedConfig() {
     const axisL = readExtAxis('L'), axisR = readExtAxis('R');
     if (!axisL || !axisR) throw new Error('旋转轴方向向量非法 (需非零 3 维向量)');
+    const profileTol = readProfileTol();
     const config = JSON.parse(JSON.stringify(extRawConfig));
     if (!config.exterior_mirror_left) config.exterior_mirror_left = {};
     if (!config.exterior_mirror_right) config.exterior_mirror_right = {};
     config.exterior_mirror_left.rotation_axis_dir = axisL;
     config.exterior_mirror_right.rotation_axis_dir = axisR;
+    config.exterior_mirror_left.profile_tol_mm = profileTol;
+    config.exterior_mirror_right.profile_tol_mm = profileTol;
     return config;
   }
 
@@ -1756,14 +1767,17 @@
     $('ext-verdict-detail').textContent = `ψ=${d.psi != null ? d.psi : 0}° θ=${d.theta != null ? d.theta : 0}° · ${d.left.mirrorPass && d.right.mirrorPass ? '两镜均通过' : (hasSearch(d.left) || hasSearch(d.right) ? '±3° 内有解' : (d.left.search == null ? '自动搜角可查' : '±3° 内无解'))}`;
 
     // 行式判定: 每镜近/远场主行 + 三边 AB/BT/TA 采样子行 (证据链, 对齐内镜五线法)
-    const zoneRow = (label, pass, marginMm) => {
+    // marginMm < 轮廓度 → 距边落在加工不确定带内 (名义在面但可能因缺料实际 off) → 标注「可能超出加工边界」
+    const zoneRow = (label, pass, marginMm, profileTolMm) => {
       const cls = pass ? 'ok' : 'no';
       const sign = pass ? '✓' : '✗';
       const color = pass ? 'var(--pass)' : 'var(--fail)';
+      const overProfile = !pass && marginMm != null && Number.isFinite(profileTolMm) && marginMm < profileTolMm;
+      const info = overProfile ? '可能超出加工边界' : (pass ? '满足' : '不足');
       const margin = marginMm != null ? `${marginMm.toFixed(1)} mm` : '—';
       return `<div class="verdict-line-row ${cls}">` +
              `<span class="verdict-line-name">${label}</span>` +
-             `<span class="verdict-line-info" style="color:${color}">${sign} ${pass ? '满足' : '不足'}</span>` +
+             `<span class="verdict-line-info" style="color:${color}">${sign} ${info}</span>` +
              `<span class="verdict-line-dist">${margin}</span>` +
              `</div>`;
     };
@@ -1785,16 +1799,18 @@
         : '-';
       const crossOk = cc.ok === true ? '✓' : (cc.ok === false ? '✗' : '-');
       const dev = Number.isFinite(cc.devMm) ? `${cc.devMm.toFixed(1)}mm` : '-';
+      const tol = Number.isFinite(r.profileTolMm) ? `±${r.profileTolMm.toFixed(1)}mm` : '-';
       return `<div class="verdict-fit-item">` +
              `<span class="verdict-fit-label">球面拟合</span>` +
              `<span class="verdict-fit-kv">SR <b>${sr}</b></span>` +
              `<span class="verdict-fit-kv">残差 <b>${res}mm</b></span>` +
              `<span class="verdict-fit-kv">交叉${crossOk} <b>${dev}</b></span>` +
+             `<span class="verdict-fit-kv">轮廓度 <b>${tol}</b></span>` +
              `</div>`;
     };
     const sideBlock = (r) =>
-      zoneRow('近场 1m', r.nearPass, r.nearMinMargin) + edgeRow(r.nearEdges) +
-      zoneRow('远场 4m', r.farPass, r.farMinMargin) + edgeRow(r.farEdges) +
+      zoneRow('近场 1m', r.nearPass, r.nearMinMargin, r.profileTolMm) + edgeRow(r.nearEdges) +
+      zoneRow('远场 4m', r.farPass, r.farMinMargin, r.profileTolMm) + edgeRow(r.farEdges) +
       fitItem(r);
     $('ext-verdict-edges-left').innerHTML = sideBlock(d.left);
     $('ext-verdict-edges-right').innerHTML = sideBlock(d.right);
@@ -1839,6 +1855,28 @@
       fillcolor: 'rgba(0,113,227,0.08)', line: { color: C.mirrorEdge, width: 2 },
       name: '反射面', hoverinfo: 'name',
     });
+    // 加工边界带 (轮廓度 ±tol mm): 名义轮廓内外各 tol 的对称加工不确定带, 两条琥珀点线紧贴名义轮廓
+    // 亚像素级 (0.3mm 相对 ~130mm 镜面), 放大可见; 视野线落入此带 = 距边 < 轮廓度 = 可能超出加工边界
+    const tol = M.profileTolMm;
+    if (Number.isFinite(tol) && tol > 0) {
+      const inner = computeSafetyLine(M.outlineUV, tol);   // 内侧 (加工缺料最坏)
+      const outer = computeSafetyLine(M.outlineUV, -tol);  // 外侧 (加工余量最坏)
+      const bandLine = { color: '#ff9500', width: 1.5, dash: 'dot' };
+      if (inner.length >= 3) {
+        const il = inner.concat([inner[0]]);
+        traces.push({
+          x: il.map(p => p[0]), y: il.map(p => p[1]), mode: 'lines',
+          line: bandLine, name: `加工边界 ±${tol}mm`, hoverinfo: 'name',
+        });
+      }
+      if (outer.length >= 3) {
+        const ol2 = outer.concat([outer[0]]);
+        traces.push({
+          x: ol2.map(p => p[0]), y: ol2.map(p => p[1]), mode: 'lines',
+          line: bandLine, name: `加工边界 ±${tol}mm`, hoverinfo: 'name', showlegend: false,
+        });
+      }
+    }
     // 4 投影 (2眼×2三角形) — 纯线 (投影三角形轮廓), 左眼蓝/右眼橙, 近实远虚
     // 失败看线伸出镜面轮廓外 (同内镜法规线倒影风格)
     const eyeColor = { left: C.projection, right: '#ff9500' };

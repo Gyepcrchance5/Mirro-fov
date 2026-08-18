@@ -80,7 +80,12 @@ def extract_outline(face_id, entities, points, n=30):
         for p in interior[1:-1]:
             outline.append([float(p[0]), float(p[1]), float(p[2])])
         outline.append([float(v_end[0]), float(v_end[1]), float(v_end[2])])
-    if outline and np.linalg.norm(np.array(outline[0]) - np.array(outline[-1])) > 8:
+    # 删除退化环的重复描边段 (CAD 导出常见: 路径出去又沿原路折回) — 对齐内镜/后挡风
+    if outline:
+        outline = st.strip_doubled_paths(np.array(outline), tol_mm=2.0).tolist()
+
+    # 闭合 (strip_doubled_paths 可能删掉闭合点, 重新闭合)
+    if outline and np.linalg.norm(np.array(outline[0]) - np.array(outline[-1])) > 1.0:
         outline.append(outline[0])
     return outline
 

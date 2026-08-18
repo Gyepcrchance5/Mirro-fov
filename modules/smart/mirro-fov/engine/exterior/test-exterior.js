@@ -249,6 +249,12 @@ const svLo = sampleVisibility(E, QEdge, m0, 3.0);
 assert(svLo.visible === true, `QEdge minMargin=3 → visible (首个 on-surface 根 d=${(svLo.d ?? NaN).toFixed(1)}mm > 3)`);
 const svHi = sampleVisibility(E, QEdge, m0, 6.0);
 assert(svHi.visible === false && svHi.reason === 'margin', `QEdge minMargin=6 → margin (阈值在 3~6mm 翻转)`);
+// 8.1b 轮廓度: profileTolMm 大于点距边 → reason 'profile' (距边落在加工不确定带内, 可能超出加工边界)
+const svProfile = sampleVisibility(E, QEdge, m0, 6.0, 10.0);
+assert(svProfile.visible === false && svProfile.reason === 'profile',
+  `QEdge profileTol=10 → profile (距边 d≈${(svProfile.d ?? NaN).toFixed(1)}mm < 10, 落在加工带内)`);
+// 8.1c 轮廓度缺省 0.3 → 距边 ≈4.9 > 0.3 仍是 'margin' (不误判)
+assert(sampleVisibility(E, QEdge, m0, 6.0).reason === 'margin', 'QEdge 缺省 profileTol=0.3 → margin (不误判为 profile)');
 // 8.2 boundaryDistanceMm 边界行为: 上边中点反射点距边 ≈0, 帽心 ≈75
 const resEdge = findMirrorPointForTarget(E, QEdge, m0);
 if (resEdge) {

@@ -748,6 +748,7 @@ router.get('/api/exterior/config', (req, res) => {
     const raw = loadExteriorVehicle(p || undefined);
     const sum = (m) => ({
       sr_fit: m.sr_fit, sr_nominal: m.sr_nominal, sr_tolerance: m.sr_tolerance, radius: m.radius,
+      profile_tol_mm: m.profile_tol_mm ?? 0.3,
       sphere_center: m.supplier_sphere_center, outline_n: m.outline_raw.length,
       turret_axis_p1: m.turret_axis_p1, rotation_axis_dir: m.rotation_axis_dir,
       fold_axis_dir: m.fold_axis_dir || null,
@@ -1039,7 +1040,7 @@ router.post('/api/step/upload', (req, res) => {
         }
         res.json({ ok: true, outline, outline_count: count, face_id: outlineJson.face_id || null, face_name: outlineJson.face_name || null });
       },
-      failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
+      failure: (msg) => res.status(400).json({ ok: false, error: msg }),
     });
   };
 
@@ -1071,7 +1072,7 @@ router.post('/api/exterior/extract', (req, res) => {
       progressMap: extExtractProgress, progressKey: filename,
       failMsg: '外镜 STEP 提取失败, 请确认文件为含球面镜 (SPHERICAL_SURFACE) 的外镜整车模型',
       success: () => res.json({ ok: true, path: outPath, vehicles: scanExteriorVehicles() }),
-      failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
+      failure: (msg) => res.status(400).json({ ok: false, error: msg }),
     });
   };
 
@@ -1102,7 +1103,7 @@ router.post('/api/interior/extract', (req, res) => {
       progressMap: intExtractProgress, progressKey: filename,
       failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜片面) 的整车 STEP',
       success: (result) => res.json({ ok: true, path: outPath, result }),
-      failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
+      failure: (msg) => res.status(400).json({ ok: false, error: msg }),
     });
   };
 
@@ -1132,7 +1133,7 @@ router.post('/api/exterior/extract/retry', jsonParser, (req, res) => {
     progressMap: extExtractProgress, progressKey: name,
     failMsg: '外镜 STEP 提取失败, 请确认文件为含球面镜 (SPHERICAL_SURFACE) 的外镜整车模型',
     success: () => res.json({ ok: true, path: outPath, vehicles: scanExteriorVehicles() }),
-    failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
+    failure: (msg) => res.status(400).json({ ok: false, error: msg }),
   });
 });
 
@@ -1157,7 +1158,7 @@ router.post('/api/interior/extract/retry', jsonParser, (req, res) => {
     progressMap: intExtractProgress, progressKey: name,
     failMsg: '内镜 STEP 提取失败, 请确认文件为含内镜 (命名点/镜片面) 的整车 STEP',
     success: (result) => res.json({ ok: true, path: outPath, result }),
-    failure: (status, msg) => res.status(status).json({ ok: false, error: msg }),
+    failure: (msg) => res.status(400).json({ ok: false, error: msg }),
   });
 });
 

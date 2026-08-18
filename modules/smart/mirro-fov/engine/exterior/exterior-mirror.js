@@ -285,32 +285,37 @@ function buildTriangles(eye, doorOuterY, ground, mirror, regulation = {}) {
  * @param {number[]|{left:number[],right:number[]}} eye - 单眼 [x,y,z] (退化双眼) 或 {left,right} 双眼
  * @param {number[]} q - 地面目标点 (3,)
  * @param {ExteriorMirror} mirror
- * @param {number} minMarginMm - 反射点距镜片边缘最小安全距离
+ * @param {number} minMarginMm - 反射点距镜片边缘最小安全距离 (法规 3mm)
+ * @param {number} [profileTolMm=0.3] - 镜片轮廓度 (加工误差, mm, 对称 ±): 在面但距边 < 此值 → 判「可能超出加工边界」
  * @returns {{visible:boolean, reason?:string, u?:number, v?:number, d?:number}}
  *
  * 双眼判据 = 交集 (GB 15084): 两眼都必须有合格反射点 (on-surface + margin) Q 才可见。
  * 单眼输入退化为单眼判定 (= 旧行为, 测试兼容)。
+ * 失败细分: 在面但 margin 不足 → 'margin'(安全距离不足) / 'profile'(距边 < 轮廓度, 可能超出加工边界); 全不在面 → 'off-surface'。
  */
-function sampleVisibility(eye, q, mirror, minMarginMm) {
+function sampleVisibility(eye, q, mirror, minMarginMm, profileTolMm = 0.3) {
   const eyes = Array.isArray(eye) ? [eye] : [eye.left, eye.right];
   if (eyes.some(e => !e.every(Number.isFinite)) || !q.every(Number.isFinite)) return { visible: false, reason: 'non-finite' };
   let marginAcc = undefined; // 双眼各合格点 margin, 取最小
   for (const e of eyes) {
     const pts = findMirrorPointsForTarget(e, q, mirror);
     if (!pts.length) return { visible: false, reason: 'no-solution' };
-    // 该眼找一个在镜面内 + margin 合格的反射点
-    let good = null, firstOnSurface = null;
+    // 该眼找一个在镜面内 + margin 合格的反射点; 同时记录距边最小的在面点 (分类/显示用最坏 margin)
+    let good = null, minOnSurface = null;
     for (const { point } of pts) {
       const [u, v] = mirror.localUV(point);
       if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
       if (!mirror.onReflectiveSurface(u, v)) continue;
       const d = mirror.boundaryDistanceMm(u, v);
-      if (!firstOnSurface) firstOnSurface = { u, v, d };
+      if (!minOnSurface || (Number.isFinite(d) && d < minOnSurface.d)) minOnSurface = { u, v, d };
       if (Number.isFinite(d) && d >= minMarginMm) { good = { u, v, d }; break; }
     }
     if (!good) {
-      // 该眼无合格点: 有在面上但 margin 不足 → margin; 全不在面上 → off-surface
-      if (firstOnSurface) return { visible: false, reason: 'margin', ...firstOnSurface };
+      // 该眼无合格点: 在面但距边 < 轮廓度 → profile(可能超出加工边界); 否则 margin(安全距离不足); 全不在面 → off-surface
+      if (minOnSurface) {
+        const reason = Number.isFinite(minOnSurface.d) && minOnSurface.d < profileTolMm ? 'profile' : 'margin';
+        return { visible: false, reason, ...minOnSurface };
+      }
       const [u0, v0] = mirror.localUV(pts[0].point);
       return { visible: false, reason: 'off-surface', u: u0, v: v0 };
     }
@@ -322,7 +327,7 @@ function sampleVisibility(eye, q, mirror, minMarginMm) {
 }
 
 /** 单边采样判定: 线段上 N 内点 + 两端点全部可见 → pass */
-function checkEdge(edge, eye, mirror, samplePerEdge, minMarginMm) {
+function checkEdge(edge, eye, mirror, samplePerEdge, minMarginMm, profileTolMm) {
   const samples = [];
   const pts = [edge.a, edge.b];
   for (let k = 0; k < samplePerEdge; k++) {
@@ -333,7 +338,7 @@ function checkEdge(edge, eye, mirror, samplePerEdge, minMarginMm) {
   }
   let allVisible = true;
   for (const q of pts) {
-    const s = sampleVisibility(eye, q, mirror, minMarginMm);
+    const s = sampleVisibility(eye, q, mirror, minMarginMm, profileTolMm);
     samples.push(s);
     if (!s.visible) allVisible = false;
   }
@@ -341,13 +346,13 @@ function checkEdge(edge, eye, mirror, samplePerEdge, minMarginMm) {
 }
 
 /** 单三角形判定: 三边 (AB/BT/TA) 全可见 → pass */
-function checkTriangle(tri, eye, mirror, samplePerEdge, minMarginMm) {
+function checkTriangle(tri, eye, mirror, samplePerEdge, minMarginMm, profileTolMm) {
   const [A, B, T] = tri.vertices;
   const edges = [
     { name: 'AB', a: A, b: B },
     { name: 'BT', a: B, b: T },
     { name: 'TA', a: T, b: A },
-  ].map(e => ({ name: e.name, ...checkEdge(e, eye, mirror, samplePerEdge, minMarginMm) }));
+  ].map(e => ({ name: e.name, ...checkEdge(e, eye, mirror, samplePerEdge, minMarginMm, profileTolMm) }));
   const pass = edges.every(r => r.pass);
   return { pass, edges };
 }
@@ -376,17 +381,17 @@ function reflectLandingSamples(mirror, eye, ground) {
  * @param {number} doorOuterY - 车门最外点 Y (m)
  * @param {Ground} ground
  * @param {ExteriorMirror} mirror
- * @param {Object} [opts] - { samplePerEdge=20, minMarginMm=3.0, regulation={} } (regulation 见 buildTriangles, 缺省 III 类)
+ * @param {Object} [opts] - { samplePerEdge=20, minMarginMm=3.0, profileTolMm=0.3, regulation={} } (regulation 见 buildTriangles, 缺省 III 类)
  * @returns {{mirrorPass:boolean, near:Object, far:Object, landings:number[][]}}
  */
 function verifyExterior(eye, doorOuterY, ground, mirror, opts = {}) {
-  const { samplePerEdge = 20, minMarginMm = 3.0, regulation = {} } = opts;
+  const { samplePerEdge = 20, minMarginMm = 3.0, profileTolMm = 0.3, regulation = {} } = opts;
   if (!ground) ground = Ground.horizontal(0.0);
   // 眼点垂面 X (通过两眼点, 两眼 X 相同, 取左眼); 可见性判定用 eye (双眼交集)
   const eyeRef = Array.isArray(eye) ? eye : eye.left;
   const tris = buildTriangles(eyeRef, doorOuterY, ground, mirror, regulation);
-  const near = tris[0] ? checkTriangle(tris[0], eye, mirror, samplePerEdge, minMarginMm) : { pass: false, edges: [] };
-  const far = tris[1] ? checkTriangle(tris[1], eye, mirror, samplePerEdge, minMarginMm) : { pass: false, edges: [] };
+  const near = tris[0] ? checkTriangle(tris[0], eye, mirror, samplePerEdge, minMarginMm, profileTolMm) : { pass: false, edges: [] };
+  const far = tris[1] ? checkTriangle(tris[1], eye, mirror, samplePerEdge, minMarginMm, profileTolMm) : { pass: false, edges: [] };
   const mirrorPass = near.pass && far.pass;
   const landings = reflectLandingSamples(mirror, eyeRef, ground);
   return { mirrorPass, near, far, landings };
